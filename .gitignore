@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.env
+
+# Database (dev only)
+caredesk.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+frontend/dist/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

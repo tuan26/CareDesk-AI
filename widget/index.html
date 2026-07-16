@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CareDesk Clinic - Phòng khám Da liễu Thẩm mỹ hàng đầu</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #334155;
+      background-color: #f8fafc;
+    }
+    header {
+      background-color: white;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+      padding: 15px 10%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+      color: #0d9488;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background-color: #0d9488;
+      color: white;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+    }
+    nav a {
+      text-decoration: none;
+      color: #475569;
+      margin-left: 20px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    nav a:hover {
+      color: #0d9488;
+    }
+    .hero {
+      padding: 80px 10%;
+      background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 400px;
+    }
+    .hero-content {
+      max-width: 550px;
+    }
+    .hero-content h1 {
+      font-size: 48px;
+      color: #0f766e;
+      margin-top: 0;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+    .hero-content p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #475569;
+      margin-bottom: 30px;
+    }
+    .btn-hero {
+      background-color: #0d9488;
+      color: white;
+      padding: 14px 28px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      box-shadow: 0 4px 15px rgba(13, 148, 136, 0.3);
+      transition: all 0.3s;
+      display: inline-block;
+    }
+    .btn-hero:hover {
+      background-color: #0f766e;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(13, 148, 136, 0.4);
+    }
+    .hero-image {
+      max-width: 450px;
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.08);
+    }
+    .services-section {
+      padding: 80px 10%;
+      text-align: center;
+    }
+    .services-section h2 {
+      font-size: 32px;
+      color: #0f766e;
+      margin-bottom: 50px;
+    }
+    .service-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 30px;
+    }
+    .service-card {
+      background-color: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+      border: 1px solid #f1f5f9;
+      text-align: left;
+      transition: transform 0.3s;
+    }
+    .service-card:hover {
+      transform: translateY(-5px);
+    }
+    .service-card h3 {
+      font-size: 20px;
+      color: #1e293b;
+      margin-top: 0;
+      margin-bottom: 15px;
+    }
+    .service-card p {
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .price-tag {
+      font-size: 18px;
+      font-weight: bold;
+      color: #0d9488;
+    }
+    footer {
+      background-color: #0f766e;
+      color: white;
+      text-align: center;
+      padding: 30px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">CD</div>
+      CareDesk Clinic
+    </div>
+    <nav>
+      <a href="#services">Dịch vụ</a>
+      <a href="#about">Về chúng tôi</a>
+      <a href="#contact">Liên hệ</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-content">
+      <h1>Khởi tạo làn da khỏe đẹp rạng ngời</h1>
+      <p>Phòng khám Da liễu Thẩm mỹ CareDesk mang đến giải pháp chăm sóc và điều trị da chuẩn y khoa chuyên nghiệp cùng đội ngũ bác sĩ hàng đầu.</p>
+      <a href="javascript:void(0)" class="btn-hero" onclick="document.getElementById('caredesk-launcher').click()">Đặt lịch khám ngay</a>
+    </div>
+    <img src="https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=500" alt="Doctor Room" class="hero-image">
+  </section>
+
+  <section id="services" class="services-section">
+    <h2>Dịch vụ Nổi bật tại CareDesk</h2>
+    <div class="service-grid">
+      <div class="service-card">
+        <h3>Khám da liễu với Bác sĩ chuyên khoa</h3>
+        <p>Khám lâm sàng, soi da kỹ thuật số trực tiếp với Bác sĩ chuyên khoa I trở lên để xác định chính xác tình trạng da.</p>
+        <span class="price-tag">150,000đ</span>
+      </div>
+      <div class="service-card">
+        <h3>Điều trị mụn Chuẩn Y Khoa</h3>
+        <p>Liệu trình 12 bước chuyên sâu: hút bã nhờn, lấy nhân mụn vô trùng, đi điện di kháng viêm và chiếu ánh sáng sinh học Biolight.</p>
+        <span class="price-tag">450,000đ</span>
+      </div>
+      <div class="service-card">
+        <h3>Laser Fractional CO2 trị sẹo rỗ</h3>
+        <p>Công nghệ Laser Fractional CO2 kích thích tăng sinh Collagen giúp lấp đầy sẹo rỗ, se khít lỗ chân lông.</p>
+        <span class="price-tag">1,200,000đ</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>&copy; 2026 CareDesk AI Clinic. Tất cả quyền được bảo lưu.</p>
+  </footer>
+
+  <!-- NHÚNG CHAT WIDGET CAREDESK AI -->
+  <script src="widget.js"></script>
+</body>
+</html>
