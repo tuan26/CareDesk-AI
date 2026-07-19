@@ -4,41 +4,72 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
-from backend.app.models.models import Conversation, Message, PatientLead, User
+from backend.app.models.models import Conversation, Message, PatientLead, User, Clinic
 from backend.app.schemas.schemas import (
     ConversationOut, MessageOut, MessageBase, ConversationStatusUpdate, PatientLeadCreate
 )
 from backend.app.services.ai_engine import process_chat_message
 from backend.app.services.evaluator import run_ai_evaluation
+from backend.app.services.audit import log_action
+from backend.app.services.rate_limit import chat_rate_limiter
+from backend.app.services.ws_manager import ws_manager
+from backend.app.services.channel_gateway import reply_to_conversation_channel
 
 router = APIRouter()
 
-@router.post("/conversations", response_model=ConversationOut)
+
+def _scoped_conv(query, user: User):
+    if user.clinic_id:
+        return query.filter(Conversation.clinic_id == user.clinic_id)
+    return query
+
+
+@router.post("/conversations", response_model=ConversationOut, dependencies=[Depends(chat_rate_limiter)])
 def start_conversation(
     *,
     db: Session = Depends(get_db),
     lead_in: PatientLeadCreate
 ) -> Any:
     """
-    Start a new conversation. Consent must be granted.
+    Start a new conversation from the web widget. Consent must be granted.
+    Multi-tenant: the widget passes clinic_id; defaults to the first clinic.
     """
     if not lead_in.consent_given:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Bạn cần đồng ý với chính sách bảo mật thông tin để bắt đầu cuộc trò chuyện."
         )
-        
-    # Check if patient lead already exists by phone
+
+    clinic_id = lead_in.clinic_id
+    if not clinic_id:
+        first_clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
+        clinic_id = first_clinic.id if first_clinic else None
+
+    # Check if patient lead already exists by phone (within the clinic)
     patient = None
     if lead_in.phone:
-        patient = db.query(PatientLead).filter(PatientLead.phone == lead_in.phone).first()
-        
+        patient = db.query(PatientLead).filter(
+            PatientLead.phone == lead_in.phone,
+            PatientLead.clinic_id == clinic_id
+        ).first()
+
     if not patient:
+        # Referral tracking: resolve the friend's code to the referring patient
+        referred_by = None
+        if lead_in.referral_code_used:
+            referrer = db.query(PatientLead).filter(
+                PatientLead.clinic_id == clinic_id,
+                PatientLead.referral_code == lead_in.referral_code_used.strip().upper()
+            ).first()
+            referred_by = referrer.id if referrer else None
+
         patient = PatientLead(
+            clinic_id=clinic_id,
             full_name=lead_in.full_name,
             phone=lead_in.phone,
             email=lead_in.email,
             source=lead_in.source,
+            referred_by_patient_id=referred_by,
             consent_given=True,
             consent_timestamp=datetime.utcnow()
         )
@@ -53,6 +84,7 @@ def start_conversation(
 
     # Create new conversation
     conv = Conversation(
+        clinic_id=clinic_id,
         patient_id=patient.id,
         channel=lead_in.source,
         status="bot_active"
@@ -60,11 +92,12 @@ def start_conversation(
     db.add(conv)
     db.commit()
     db.refresh(conv)
-    
+
+    ws_manager.notify(clinic_id, {"type": "conversation_started", "conversation_id": conv.id})
     return conv
 
 
-@router.post("/conversations/{conv_id}/messages", response_model=MessageOut)
+@router.post("/conversations/{conv_id}/messages", response_model=MessageOut, dependencies=[Depends(chat_rate_limiter)])
 def send_message(
     *,
     db: Session = Depends(get_db),
@@ -72,12 +105,13 @@ def send_message(
     msg_in: MessageBase
 ) -> Any:
     """
-    Patient sends a message to the bot. AI processes it and returns response.
+    Patient sends a message. If the bot is active, the AI processes and replies.
+    After handoff, the message is stored for the human agent (no bot reply).
     """
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
-        
+
     # Save patient message
     patient_msg = Message(
         conversation_id=conv.id,
@@ -85,18 +119,30 @@ def send_message(
         content=msg_in.content
     )
     db.add(patient_msg)
+    conv.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(patient_msg)
 
+    # Human is (or will be) handling: store only, notify staff, no bot reply
+    if conv.status in ("handoff_requested", "agent_active"):
+        ws_manager.notify(conv.clinic_id, {"type": "message", "conversation_id": conv.id, "sender": "patient"})
+        return patient_msg
+
     # Process via AI Engine
     ai_response, is_handoff = process_chat_message(db, conv.id, msg_in.content)
-    
-    # Query the last message created (which would be the bot's response)
+    ws_manager.notify(conv.clinic_id, {
+        "type": "handoff" if is_handoff else "message",
+        "conversation_id": conv.id,
+        "sender": "bot"
+    })
+
+    # Query the last bot message created (the AI's reply).
+    # Order by id: created_at only has second precision, ties would return a stale reply.
     bot_msg = db.query(Message).filter(
         Message.conversation_id == conv.id,
         Message.sender == "bot"
-    ).order_by(Message.created_at.desc()).first()
-    
+    ).order_by(Message.id.desc()).first()
+
     if not bot_msg:
         # Fallback if somehow process_chat_message did not save (should not happen)
         bot_msg = Message(
@@ -107,8 +153,27 @@ def send_message(
         db.add(bot_msg)
         db.commit()
         db.refresh(bot_msg)
-        
+
     return bot_msg
+
+
+@router.get("/conversations/{conv_id}/messages", response_model=List[MessageOut], dependencies=[Depends(chat_rate_limiter)])
+def poll_messages(
+    conv_id: int,
+    after_id: int = 0,
+    db: Session = Depends(get_db)
+) -> Any:
+    """
+    Public polling endpoint for the chat widget: fetch messages newer than `after_id`
+    so patients can see human agent replies after a handoff.
+    """
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
+    return db.query(Message).filter(
+        Message.conversation_id == conv_id,
+        Message.id > after_id
+    ).order_by(Message.created_at.asc()).all()
 
 
 @router.post("/conversations/{conv_id}/agent-messages", response_model=MessageOut)
@@ -121,30 +186,30 @@ def send_agent_message(
 ) -> Any:
     """
     Agent sends a message in a conversation. AI does not respond.
+    The reply is also pushed to the external channel (Zalo/Facebook) when applicable.
     """
-    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    conv = _scoped_conv(db.query(Conversation), current_user).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
-        
-    # Save agent message
+
     agent_msg = Message(
         conversation_id=conv.id,
         sender="agent",
         content=msg_in.content
     )
     db.add(agent_msg)
-    
-    # Touch updated timestamp
     conv.updated_at = datetime.utcnow()
-    
     db.commit()
     db.refresh(agent_msg)
-    
+
+    # Push to Zalo/Facebook if this conversation lives on an external channel
+    reply_to_conversation_channel(db, conv, msg_in.content)
+    ws_manager.notify(conv.clinic_id, {"type": "message", "conversation_id": conv.id, "sender": "agent"})
+
     return agent_msg
 
 
 @router.get("/conversations", response_model=List[ConversationOut])
-
 def list_conversations(
     db: Session = Depends(get_db),
     status: Optional[str] = None,
@@ -153,7 +218,7 @@ def list_conversations(
     """
     List conversations for receptionist inbox.
     """
-    query = db.query(Conversation)
+    query = _scoped_conv(db.query(Conversation), current_user)
     if status:
         query = query.filter(Conversation.status == status)
     return query.order_by(Conversation.updated_at.desc()).all()
@@ -168,11 +233,10 @@ def get_conversation_detail(
     """
     Get conversation details and messages for admin dashboard inbox.
     """
-    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    conv = _scoped_conv(db.query(Conversation), current_user).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
-    
-    # Load messages
+
     messages = db.query(Message).filter(Message.conversation_id == conv_id).order_by(Message.created_at.asc()).all()
     conv.messages = messages
     return conv
@@ -188,13 +252,15 @@ def update_conversation_status(
     """
     Change conversation status (e.g. receptionist taking over -> agent_active).
     """
-    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    conv = _scoped_conv(db.query(Conversation), current_user).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
-        
+
     conv.status = status_in.status
+    log_action(db, current_user.id, "update_conversation_status", f"Hội thoại #{conv.id} -> {status_in.status}")
     db.commit()
     db.refresh(conv)
+    ws_manager.notify(conv.clinic_id, {"type": "status", "conversation_id": conv.id, "status": conv.status})
     return conv
 
 
@@ -207,25 +273,26 @@ def erase_patient_data(
     """
     Delete patient conversation data upon request (GDPR compliance / Data Erasure).
     """
-    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    conv = _scoped_conv(db.query(Conversation), current_user).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
-        
+
     patient = conv.patient
-    
+    log_action(db, current_user.id, "data_erasure", f"Xóa dữ liệu hội thoại #{conv.id}")
+
     # Delete conversation (this cascade deletes all associated Messages)
     db.delete(conv)
     db.commit()
-    
+
     # Delete patient lead if they don't have other conversations/appointments
     if patient:
         other_convs = db.query(Conversation).filter(Conversation.patient_id == patient.id).count()
-        appts = db.query(PatientLead).filter(PatientLead.id == patient.id).first().appointments
-        
+        appts = patient.appointments
+
         if other_convs == 0 and len(appts) == 0:
             db.delete(patient)
             db.commit()
-            
+
     return
 
 

@@ -512,3 +512,5 @@ button {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+
+.badge.awaiting_deposit { background-color: #fff7ed; color: #ea580c; }

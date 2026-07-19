@@ -13,11 +13,23 @@ class UserCreate(UserBase):
 
 class UserOut(UserBase):
     id: int
+    clinic_id: Optional[int] = None
+    organization_id: Optional[int] = None
+    is_platform_admin: bool = False
     is_active: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class ClinicRegister(BaseModel):
+    clinic_name: str
+    owner_name: str
+    email: EmailStr
+    password: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -35,12 +47,18 @@ class ClinicBase(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     cancellation_policy: Optional[str] = None
+    deposit_amount: Optional[float] = None  # 0 = deposits off
+    google_review_url: Optional[str] = None
+    digest_enabled: Optional[bool] = None
 
 class ClinicCreate(ClinicBase):
     pass
 
 class ClinicOut(ClinicBase):
     id: int
+    plan: str = "free"
+    ai_quota_monthly: int = 200
+    monthly_fee: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
@@ -126,15 +144,26 @@ class PatientLeadBase(BaseModel):
     consent_given: bool = False
 
 class PatientLeadCreate(PatientLeadBase):
-    pass
+    clinic_id: Optional[int] = None
+    referral_code_used: Optional[str] = None  # friend's code entered at signup
 
 class PatientLeadOut(PatientLeadBase):
     id: int
     consent_timestamp: Optional[datetime] = None
+    note: Optional[str] = None
+    tags: Optional[List[str]] = None
+    referral_code: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+class PatientLeadUpdate(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    note: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 # Message & Conversation
@@ -157,6 +186,7 @@ class MessageOut(BaseModel):
 
 class ConversationOut(BaseModel):
     id: int
+    clinic_id: Optional[int] = None
     patient_id: int
     channel: str
     status: str
@@ -188,6 +218,7 @@ class AppointmentCreate(AppointmentBase):
 
 class AppointmentOut(AppointmentBase):
     id: int
+    booking_source: Optional[str] = "staff"
     created_at: datetime
     patient: Optional[PatientLeadOut] = None
     service: Optional[ServiceOut] = None
@@ -225,3 +256,111 @@ class AuditLogOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Channel Integration
+class ChannelIntegrationIn(BaseModel):
+    channel: str  # zalo | facebook
+    enabled: bool = False
+    access_token: Optional[str] = None
+    verify_token: Optional[str] = None
+    extra_config: Optional[Dict[str, Any]] = None
+
+class ChannelIntegrationOut(BaseModel):
+    id: int
+    channel: str
+    enabled: bool
+    access_token_masked: Optional[str] = None
+    verify_token: Optional[str] = None
+    extra_config: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Patient detail (mini-CRM)
+class PatientDetailOut(PatientLeadOut):
+    appointments: List["AppointmentOut"] = []
+    conversation_count: int = 0
+
+
+# Service Packages (prepaid multi-session)
+class ServicePackageCreate(BaseModel):
+    name: str
+    service_id: Optional[int] = None
+    total_sessions: int = 5
+    price: float
+    validity_days: int = 180
+    active: bool = True
+
+class ServicePackageOut(ServicePackageCreate):
+    id: int
+    clinic_id: int
+
+    class Config:
+        from_attributes = True
+
+class SellPackageIn(BaseModel):
+    patient_id: int
+    package_id: int
+
+
+# Automation rules
+class AutomationRuleUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    message_template: Optional[str] = None
+    delay_minutes: Optional[int] = None
+
+
+# Waitlist
+class WaitlistCreate(BaseModel):
+    patient_id: int
+    service_id: Optional[int] = None
+    preferred_date: Optional[str] = None
+
+
+# Copilot
+class CopilotAsk(BaseModel):
+    question: str
+
+
+# ===== Platform super-admin (vendor) =====
+class PlatformClinicCreate(BaseModel):
+    clinic_name: str
+    owner_name: str
+    owner_email: EmailStr
+    owner_password: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    plan: str = "free"  # free | pro
+    monthly_fee: Optional[float] = None
+    organization_id: Optional[int] = None
+    seed_demo_catalogue: bool = True  # create starter branch/services/doctor
+
+class PlatformClinicUpdate(BaseModel):
+    plan: Optional[str] = None
+    ai_quota_monthly: Optional[int] = None
+    monthly_fee: Optional[float] = None
+    is_active: Optional[bool] = None
+    organization_id: Optional[int] = None
+
+
+# ===== Organization (chain) =====
+class OrganizationCreate(BaseModel):
+    name: str
+    owner_name: str
+    owner_email: EmailStr
+    owner_password: str
+
+class OrganizationOut(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AssignClinicToOrg(BaseModel):
+    clinic_id: int
+    organization_id: Optional[int] = None  # None detaches the clinic from its chain

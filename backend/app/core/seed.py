@@ -1,8 +1,9 @@
 import datetime
 from sqlalchemy.orm import Session
+from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal, engine, Base
 from backend.app.models.models import (
-    User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule
+    User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule, Organization
 )
 from backend.app.core.security import get_password_hash
 
@@ -175,7 +176,56 @@ def seed_db():
             ]
             db.add_all(rules)
             db.commit()
-            
+
+        # 8. Multi-tenant backfill: bind seeded users & doctors to the demo clinic (Pro plan)
+        clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
+        if clinic:
+            db.query(User).filter(User.clinic_id == None).update({User.clinic_id: clinic.id})  # noqa: E711
+            db.query(Doctor).filter(Doctor.clinic_id == None).update({Doctor.clinic_id: clinic.id})  # noqa: E711
+            if clinic.plan != "pro":
+                clinic.plan = "pro"
+                clinic.ai_quota_monthly = settings.PLAN_PRO_QUOTA
+            if not clinic.monthly_fee:
+                clinic.monthly_fee = 1500000  # demo Pro fee, feeds the ROI metric
+            db.commit()
+
+            # 9. Default revenue automations (follow-up, recall, review, waitlist...)
+            from backend.app.services.events import seed_default_automations
+            seed_default_automations(db, clinic.id)
+
+        # 10. Platform super-admin (vendor/publisher) — idempotent
+        if db.query(User).filter(User.is_platform_admin == True).count() == 0:  # noqa: E712
+            print("Seeding Platform super-admin...")
+            db.add(User(
+                email="platform@caredesk.ai",
+                password_hash=get_password_hash("platform123"),
+                full_name="Nhà phát hành CareDesk",
+                role="admin",
+                is_platform_admin=True,
+                clinic_id=None,
+                is_active=True,
+            ))
+            db.commit()
+
+        # 11. Demo chain: attach the demo clinic to an Organization + a chain-owner account
+        if db.query(Organization).count() == 0:
+            print("Seeding demo Organization (chain)...")
+            org = Organization(name="Chuỗi Thẩm mỹ CareDesk Group", is_active=True)
+            db.add(org)
+            db.flush()
+            demo_clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
+            if demo_clinic and demo_clinic.organization_id is None:
+                demo_clinic.organization_id = org.id
+            db.add(User(
+                organization_id=org.id, clinic_id=None,
+                email="chain@caredesk.ai",
+                password_hash=get_password_hash("chain123"),
+                full_name="Chủ chuỗi Trần Thị Chuỗi",
+                role="org_owner",
+                is_active=True,
+            ))
+            db.commit()
+
         print("Database seeded successfully!")
     except Exception as e:
         print(f"Error during seeding: {e}")

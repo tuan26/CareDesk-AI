@@ -1,7 +1,11 @@
 (function () {
-  // Config API Base URL
-  const API_BASE = "http://localhost:8000/api/v1";
+  // Per-site config: <script>window.CareDeskConfig = { apiBase: "...", clinicId: 1 }</script>
+  const CONFIG = window.CareDeskConfig || {};
+  const API_BASE = (CONFIG.apiBase || "http://localhost:8000") + "/api/v1";
+  const CLINIC_ID = CONFIG.clinicId || 1;
   let conversationId = null;
+  let lastMessageId = 0;   // for polling agent replies
+  let pollTimer = null;
 
   // Insert CSS stylesheet
   const link = document.createElement("link");
@@ -58,6 +62,10 @@
         <div class="form-group">
           <label for="cd-email">Email (Nhận nhắc lịch)</label>
           <input type="email" id="cd-email" placeholder="example@gmail.com">
+        </div>
+        <div class="form-group">
+          <label for="cd-referral">Mã giới thiệu (nếu có)</label>
+          <input type="text" id="cd-referral" placeholder="CD****** — nhận ưu đãi từ bạn bè">
         </div>
         <div class="consent-checkbox-group">
           <input type="checkbox" id="cd-consent" value="true">
@@ -123,12 +131,15 @@
 
   // Start Chat (Create Patient Lead & Conversation)
   startBtn.addEventListener("click", async () => {
+    const referralInput = chatbox.querySelector("#cd-referral");
     const payload = {
       full_name: nameInput.value.trim(),
       phone: phoneInput.value.trim(),
       email: emailInput.value.trim() || null,
       source: "web",
-      consent_given: true
+      consent_given: true,
+      clinic_id: CLINIC_ID,
+      referral_code_used: referralInput && referralInput.value.trim() ? referralInput.value.trim() : null
     };
 
     startBtn.disabled = true;
@@ -154,6 +165,9 @@
 
       // Insert Initial Bot Welcome Message
       appendMessage("bot", `Chào bạn ${payload.full_name}, tôi là trợ lý ảo CareDesk AI. Tôi có thể giúp bạn giải đáp dịch vụ, bảng giá phòng khám hoặc hỗ trợ đặt lịch hẹn khám nhanh chóng. Bạn đang quan tâm dịch vụ nào ạ?`);
+
+      // Poll for human agent replies (after handoff, receptionist chats from the dashboard)
+      pollTimer = setInterval(pollAgentMessages, 4000);
     } catch (err) {
       alert("Lỗi kết nối đến máy chủ. Vui lòng thử lại sau.");
       startBtn.disabled = false;
@@ -210,14 +224,18 @@
       }
 
       const data = await response.json();
-      appendMessage("bot", data.content);
+      if (data.id) lastMessageId = Math.max(lastMessageId, data.id);
 
-      // Check if handoff triggered
-      if (data.evaluation_metadata && data.evaluation_metadata.safety_triggered) {
+      // After handoff the API returns our own patient message back - only bot replies get appended
+      if (data.sender === "bot") {
+        appendMessage("bot", data.content);
+      }
+
+      // Handoff triggered: keep chatting enabled - a human agent takes over in this same window
+      const meta = data.evaluation_metadata || {};
+      if (meta.safety_triggered || meta.quota_exceeded) {
         document.getElementById("caredesk-handoff-banner").style.display = "block";
-        msgInput.disabled = true;
-        sendBtn.disabled = true;
-        msgInput.placeholder = "Hội thoại đã được chuyển cho lễ tân...";
+        msgInput.placeholder = "Lễ tân sẽ trả lời bạn ngay tại đây...";
       }
     } catch (err) {
       const typingEl = document.getElementById("cd-typing");
@@ -231,6 +249,25 @@
   msgInput.addEventListener("keypress", (e) => {
     if (e.key === "Enter") sendMessage();
   });
+
+  // Poll new messages so the patient sees human agent replies after handoff
+  async function pollAgentMessages() {
+    if (!conversationId) return;
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages?after_id=${lastMessageId}`);
+      if (!response.ok) return;
+      const messages = await response.json();
+      for (const msg of messages) {
+        if (msg.id > lastMessageId) lastMessageId = msg.id;
+        if (msg.sender === "agent") {
+          appendMessage("agent", msg.content);
+          document.getElementById("caredesk-handoff-banner").style.display = "none";
+        }
+      }
+    } catch (err) {
+      /* silent - next poll retries */
+    }
+  }
 
   function escapeHTML(str) {
     return str.replace(/[&<>'"]/g, 

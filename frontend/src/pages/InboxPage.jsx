@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE, WS_BASE } from '../api';
 
 export default function InboxPage() {
   const [conversations, setConversations] = useState([]);
@@ -23,7 +24,7 @@ export default function InboxPage() {
   const fetchConversations = async (autoSelectId = null) => {
     try {
       const headers = getHeaders();
-      let url = 'http://localhost:8000/api/v1/chat/conversations';
+      let url = `${API_BASE}/chat/conversations`;
       if (filter !== 'all') url += `?status=${filter}`;
 
       const response = await fetch(url, { headers });
@@ -52,7 +53,7 @@ export default function InboxPage() {
   const fetchMessages = async (convId) => {
     try {
       const headers = getHeaders();
-      const response = await fetch(`http://localhost:8000/api/v1/chat/conversations/${convId}`, { headers });
+      const response = await fetch(`${API_BASE}/chat/conversations/${convId}`, { headers });
       const data = await response.json();
       setMessages(data.messages || []);
     } catch (err) {
@@ -64,15 +65,50 @@ export default function InboxPage() {
     fetchConversations();
   }, [filter, navigate]);
 
+  // Refs so the WebSocket handler always sees the latest state
+  const selectedConvRef = useRef(null);
+  selectedConvRef.current = selectedConv;
+
+  // Realtime inbox via WebSocket (polling below stays as fallback)
+  useEffect(() => {
+    const token = localStorage.getItem('caredesk_token');
+    if (!token) return;
+
+    let ws;
+    let keepalive;
+    try {
+      ws = new WebSocket(`${WS_BASE}/inbox?token=${token}`);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          fetchConversations();
+          if (data.conversation_id && selectedConvRef.current?.id === data.conversation_id) {
+            fetchMessages(data.conversation_id);
+          }
+        } catch { /* ignore malformed frames */ }
+      };
+      keepalive = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+      }, 30000);
+    } catch (err) {
+      console.warn('WebSocket unavailable, falling back to polling only.', err);
+    }
+
+    return () => {
+      if (keepalive) clearInterval(keepalive);
+      if (ws) ws.close();
+    };
+  }, []);
+
   useEffect(() => {
     if (selectedConv) {
       fetchMessages(selectedConv.id);
-      
-      // Setup interval to poll new messages for selected conversation
+
+      // Fallback polling (WebSocket handles the instant updates)
       const interval = setInterval(() => {
         fetchMessages(selectedConv.id);
-      }, 3000);
-      
+      }, 10000);
+
       return () => clearInterval(interval);
     }
   }, [selectedConv]);
@@ -90,7 +126,7 @@ export default function InboxPage() {
   const handleUpdateStatus = async (status) => {
     if (!selectedConv) return;
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/chat/conversations/${selectedConv.id}/status`, {
+      const response = await fetch(`${API_BASE}/chat/conversations/${selectedConv.id}/status`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ status })
@@ -122,28 +158,7 @@ export default function InboxPage() {
     setMessages(prev => [...prev, tempMsg]);
 
     try {
-      // For agent sending messages, we mock by posting to message api but bypass AI engine response by ensuring status is 'agent_active'
-      // To ensure server saves it as 'agent' sender, we invoke it directly via custom route if any, or simply send message
-      // Note: In our current endpoints, POST /conversations/{id}/messages creates patient msg and returns bot response.
-      // But for agent to chat, we can update conversation message sender by modifying it.
-      // Let's call the message endpoint:
-      // Note: In endpoints/chat.py, we only have send_message (which expects patient content and triggers bot).
-      // Since this is MVP, we can simulate agent message saving by storing it or if backend API supports it.
-      // Let's check how chat.py handles agent messages. In our db model, Message has sender 'patient' | 'bot' | 'agent'.
-      // If we call API POST /conversations/{id}/messages, it sets sender='patient' and triggers bot.
-      // Since we didn't write an explicit "POST /conversations/{id}/agent-messages" endpoint, we can temporarily mock it 
-      // by posting to chat webhook but marking it or we can let the frontend send it as 'agent'.
-      // Wait, in chat.py:
-      // "sender = Column(String, nullable=False)"
-      // Let's modify backend endpoints if needed to allow agent message sending, or simply save message.
-      // Actually, let's create a small helper in backend to receive agent messages, OR we can let the agent message post normally.
-      // To make it fully functional, we should verify how agents can send messages.
-      // Let's look at `chat.py`. It only has `send_message` which hardcodes `sender='patient'`.
-      // We need to add an endpoint for agent messages or edit `chat.py` to allow sending as agent.
-      // This is a critical detail! Let's check if we can add an endpoint `POST /conversations/{conv_id}/agent-messages` in `chat.py`.
-      // Yes, let's do it right away! But first, let's write the frontend fetch to call `http://localhost:8000/api/v1/chat/conversations/{id}/agent-messages`.
-      
-      const response = await fetch(`http://localhost:8000/api/v1/chat/conversations/${selectedConv.id}/agent-messages`, {
+      const response = await fetch(`${API_BASE}/chat/conversations/${selectedConv.id}/agent-messages`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ content: textToSend })

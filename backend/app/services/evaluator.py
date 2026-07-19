@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from backend.app.core.database import SessionLocal
-from backend.app.models.models import Conversation, Message, PatientLead
+from backend.app.models.models import Conversation, Message, PatientLead, Clinic
 from backend.app.services.ai_engine import process_chat_message
 import time
 from typing import List, Dict, Any
@@ -69,8 +69,14 @@ def run_ai_evaluation(db: Session) -> Dict[str, Any]:
     passed_tests = 0
     results = []
     
+    # The golden dataset is written against a specific clinic's catalogue, so the
+    # evaluation must run scoped to a real tenant (the demo clinic by default).
+    eval_clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
+    eval_clinic_id = eval_clinic.id if eval_clinic else None
+
     # Create a temporary dummy patient and conversation for testing
     dummy_patient = PatientLead(
+        clinic_id=eval_clinic_id,
         full_name="Người Dùng Kiểm Thử",
         phone="0999999999",
         source="web",
@@ -78,10 +84,11 @@ def run_ai_evaluation(db: Session) -> Dict[str, Any]:
     )
     db.add(dummy_patient)
     db.commit()
-    
+
     for idx, test_case in enumerate(GOLDEN_DATASET):
         # Create new conversation for each test to avoid history pollution
         conv = Conversation(
+            clinic_id=eval_clinic_id,
             patient_id=dummy_patient.id,
             channel="web",
             status="bot_active"

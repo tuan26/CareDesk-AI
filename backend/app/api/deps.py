@@ -5,7 +5,7 @@ from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
-from backend.app.models.models import User
+from backend.app.models.models import User, Clinic
 from backend.app.schemas.schemas import TokenData
 
 
@@ -38,9 +38,38 @@ def get_current_user(
 
 def get_current_active_user(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> User:
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    # A suspended clinic blocks its staff (platform admins are exempt).
+    if current_user.clinic_id and not current_user.is_platform_admin:
+        clinic = db.query(Clinic).filter(Clinic.id == current_user.clinic_id).first()
+        if clinic and clinic.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Phòng khám đang tạm ngưng dịch vụ. Vui lòng liên hệ nhà cung cấp CareDesk AI."
+            )
+    return current_user
+
+
+def get_platform_admin(current_user: User = Depends(get_current_active_user)) -> User:
+    """Vendor/publisher super-admin: manages every tenant across the platform."""
+    if not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ Quản trị Nền tảng (nhà phát hành) mới có quyền truy cập khu vực này."
+        )
+    return current_user
+
+
+def get_org_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """Chain owner: sees every clinic under their organization."""
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản của bạn không thuộc chuỗi/tổ chức nào."
+        )
     return current_user
 
 

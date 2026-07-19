@@ -21,3 +21,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# DB backups (dev only)
+*.bak
+caredesk.db.bak*

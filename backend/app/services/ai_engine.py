@@ -5,7 +5,8 @@ from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.models.models import (
-    Conversation, Message, PatientLead, Service, Doctor, WorkingSchedule, Appointment, AISafetyRule
+    Conversation, Message, PatientLead, Service, Doctor, WorkingSchedule, Appointment, AISafetyRule,
+    Clinic, Branch
 )
 
 # Initialize OpenAI client if API key is provided
@@ -18,12 +19,16 @@ if settings.OPENAI_API_KEY:
         print(f"Failed to initialize OpenAI client: {e}")
 
 
-def check_safety_rules(db: Session, text: str) -> Optional[AISafetyRule]:
+def check_safety_rules(db: Session, text: str, clinic_id: Optional[int] = None) -> Optional[AISafetyRule]:
     """
     Check if the text contains any dangerous keywords defined in AISafetyRule.
+    Global rules (clinic_id NULL) always apply; clinic-specific rules apply on top.
     Returns the matched AISafetyRule or None.
     """
-    rules = db.query(AISafetyRule).all()
+    query = db.query(AISafetyRule)
+    if clinic_id:
+        query = query.filter((AISafetyRule.clinic_id == None) | (AISafetyRule.clinic_id == clinic_id))  # noqa: E711
+    rules = query.all()
     text_lower = text.lower()
     
     for rule in rules:
@@ -94,13 +99,49 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
     return all_slots
 
 
-def query_faq_rag(db: Session, query: str) -> str:
+def resolve_clinic(db: Session, clinic_id: Optional[int]) -> Optional[Clinic]:
     """
-    Simple RAG implementation: Matches query keywords with Service description and service FAQ database.
+    Resolve the tenant for this conversation. If clinic_id is missing (legacy
+    single-tenant data), fall back to the only clinic ONLY when exactly one
+    exists — never leak data across tenants when several are present.
     """
-    services = db.query(Service).all()
+    if clinic_id:
+        return db.query(Clinic).filter(Clinic.id == clinic_id).first()
+    clinics = db.query(Clinic).limit(2).all()
+    return clinics[0] if len(clinics) == 1 else None
+
+
+def clinic_services(db: Session, clinic: Optional[Clinic]) -> List[Service]:
+    if not clinic:
+        return []
+    return db.query(Service).filter(Service.clinic_id == clinic.id).all()
+
+
+def build_clinic_identity(db: Session, clinic: Optional[Clinic]) -> str:
+    """One identity block (name/address/hotline + branches), strictly clinic-scoped."""
+    if not clinic:
+        return "Thông tin phòng khám chưa được cấu hình."
+    lines = [f"Tên phòng khám: {clinic.name}."]
+    if clinic.address:
+        lines.append(f"Địa chỉ: {clinic.address}.")
+    if clinic.phone:
+        lines.append(f"Hotline: {clinic.phone}.")
+    branches = db.query(Branch).filter(Branch.clinic_id == clinic.id).all()
+    for b in branches:
+        hours = f" — giờ làm việc {b.working_hours}" if b.working_hours else ""
+        lines.append(f"- Chi nhánh {b.name}: {b.address}{hours}.")
+    return "\n".join(lines)
+
+
+def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None) -> str:
+    """
+    Simple RAG implementation, STRICTLY scoped to one clinic: matches query
+    keywords against THIS clinic's services + FAQ. Never reads other tenants' data.
+    """
+    clinic = resolve_clinic(db, clinic_id)
+    services = clinic_services(db, clinic)
     context_chunks = []
-    
+
     # Match services based on basic keyword matching
     query_lower = query.lower()
     for service in services:
@@ -112,25 +153,24 @@ def query_faq_rag(db: Session, query: str) -> str:
                 if len(word) > 2 and word in query_lower:
                     matched = True
                     break
-                    
+
         if matched:
             chunk = f"Dịch vụ: {service.name}. Giá: {service.price:,.0f} VNĐ. Thời lượng: {service.duration_minutes} phút. Mô tả: {service.description}."
             if service.preparation_instructions:
                 chunk += f" Chuẩn bị trước khi khám: {service.preparation_instructions}"
             context_chunks.append(chunk)
-            
+
             # Append FAQs of this service
             if service.faq_data:
                 for faq in service.faq_data:
                     context_chunks.append(f"Hỏi: {faq['question']} -> Đáp: {faq['answer']}")
-                    
-    # If no services matched, dump all services info briefly
+
+    # If no services matched, provide this clinic's identity + brief catalogue
     if not context_chunks:
-        clinic_info = "Phòng khám Da liễu Thẩm mỹ CareDesk. Địa chỉ: 123 Đường Ba Tháng Hai, Q.10, TP.HCM. Hotline: 0901234567. Mở cửa: 08:00 - 20:00."
-        context_chunks.append(clinic_info)
+        context_chunks.append(build_clinic_identity(db, clinic))
         for service in services:
             context_chunks.append(f"- Dịch vụ {service.name}: giá {service.price:,.0f} VNĐ (Thời gian: {service.duration_minutes} phút).")
-            
+
     return "\n".join(context_chunks)
 
 
@@ -189,49 +229,124 @@ def extract_booking_entities_mock(text: str) -> Dict[str, Any]:
     return entities
 
 
-def call_openai_gpt_mock(system_prompt: str, user_query: str, history: List[Dict[str, str]]) -> str:
+def call_openai_gpt_mock(db: Session, clinic: Optional[Clinic], user_query: str) -> str:
     """
-    Mock AI response when OpenAI API Key is missing or fails.
+    Fallback AI response when no OpenAI key is set. Data-driven from THIS clinic's
+    own catalogue/branches — no hardcoded clinic name, price or address, so it is
+    correct for every tenant (not just the CareDesk demo).
     """
     query_lower = user_query.lower()
-    
-    # 1. FAQ response mock
-    if "giá" in query_lower or "bao nhiêu" in query_lower or "phí" in query_lower:
-        if "mụn" in query_lower:
-            return "Chào bạn, liệu trình Điều trị mụn Chuẩn Y Khoa tại CareDesk có giá là 450,000đ cho 75 phút điều trị toàn bộ 12 bước chuyên sâu. Bạn có muốn đặt lịch hẹn thực hiện dịch vụ này không?"
-        elif "khám" in query_lower or "soi da" in query_lower:
-            return "Chào bạn, phí khám da liễu trực tiếp với Bác sĩ chuyên khoa tại CareDesk là 150,000đ (đã bao gồm soi da kỹ thuật số). Bạn có muốn đặt lịch hẹn khám không?"
-        elif "laser" in query_lower or "sẹo" in query_lower:
-            return "Chào bạn, dịch vụ Laser Fractional CO2 trị sẹo rỗ có giá là 1,200,000đ cho mỗi buổi điều trị. Bạn có muốn đặt lịch tư vấn không?"
-        else:
-            return "Chào bạn, CareDesk hiện cung cấp các dịch vụ: 1. Khám da liễu với Bác sĩ (150k), 2. Trị mụn Chuẩn Y khoa (450k), 3. Laser Fractional CO2 trị sẹo rỗ (1.200k). Bạn đang quan tâm dịch vụ nào ạ?"
-            
-    if "địa chỉ" in query_lower or "ở đâu" in query_lower or "chi nhánh" in query_lower:
-        return "CareDesk có 2 chi nhánh chính làm việc từ 08:00 đến 20:00:\n1. Chi nhánh Quận 10 (Trụ sở): 123 Đường Ba Tháng Hai, Q.10, TP.HCM.\n2. Chi nhánh Quận 1: 456 Đường Nguyễn Huệ, Q.1, TP.HCM.\nBạn ở gần khu vực nào hơn ạ?"
+    services = clinic_services(db, clinic)
+    clinic_name = clinic.name if clinic else "phòng khám"
 
-    if "giờ làm việc" in query_lower or "mở cửa" in query_lower or "mấy giờ" in query_lower or ("làm việc" in query_lower and "giờ" in query_lower):
-        return "Phòng khám CareDesk mở cửa tất cả các ngày trong tuần. Chi nhánh Quận 10 hoạt động từ 08:00 đến 20:00, Chi nhánh Quận 1 hoạt động từ 09:00 đến 21:00. Bạn dự định ghé chi nhánh nào ạ?"
+    def _match_service(q: str) -> Optional[Service]:
+        # Rank by number of matching name-words so a specific hit ("trị mụn")
+        # beats an incidental one ("phòng khám" -> "Khám da liễu").
+        best, best_hits = None, 0
+        for s in services:
+            name = s.name.lower()
+            if name in q:
+                return s
+            hits = sum(1 for w in name.split() if len(w) > 2 and w in q)
+            if hits > best_hits:
+                best, best_hits = s, hits
+        return best if best_hits >= 1 else None
+
+    # 1. Pricing
+    if any(k in query_lower for k in ("giá", "bao nhiêu", "phí")):
+        s = _match_service(query_lower)
+        if s:
+            return (f"Dạ, dịch vụ {s.name} tại {clinic_name} có giá {s.price:,.0f}đ "
+                    f"cho {s.duration_minutes} phút. Bạn có muốn đặt lịch hẹn không ạ?")
+        if services:
+            listing = "; ".join(f"{s.name} ({s.price:,.0f}đ)" for s in services[:6])
+            return f"Dạ, {clinic_name} hiện có các dịch vụ: {listing}. Bạn đang quan tâm dịch vụ nào ạ?"
+        return f"Dạ, bạn vui lòng để lại thông tin, lễ tân {clinic_name} sẽ báo giá chi tiết cho bạn nhé."
+
+    # 2. Address / branches
+    if any(k in query_lower for k in ("địa chỉ", "ở đâu", "chi nhánh")):
+        branches = db.query(Branch).filter(Branch.clinic_id == clinic.id).all() if clinic else []
+        if branches:
+            lines = "\n".join(
+                f"- {b.name}: {b.address}" + (f" ({b.working_hours})" if b.working_hours else "")
+                for b in branches
+            )
+            return f"Dạ, {clinic_name} có các cơ sở sau:\n{lines}\nBạn ở gần khu vực nào hơn ạ?"
+        if clinic and clinic.address:
+            return f"Dạ, {clinic_name} ở địa chỉ: {clinic.address}. Bạn cần tôi chỉ đường chi tiết không ạ?"
+        return f"Dạ, bạn vui lòng để lại thông tin, lễ tân {clinic_name} sẽ gửi địa chỉ cho bạn nhé."
+
+    # 3. Working hours
+    if any(k in query_lower for k in ("giờ làm", "mở cửa", "mấy giờ")):
+        branches = db.query(Branch).filter(Branch.clinic_id == clinic.id).all() if clinic else []
+        opened = [b for b in branches if b.working_hours]
+        if opened:
+            lines = "\n".join(f"- {b.name}: {b.working_hours}" for b in opened)
+            return f"Dạ, giờ làm việc của {clinic_name}:\n{lines}"
+        return f"Dạ, bạn vui lòng liên hệ hotline để biết giờ làm việc của {clinic_name} nhé."
+
+    # 4. Booking hint (the real end-to-end flow is handled by booking_flow)
+    if any(k in query_lower for k in ("đặt lịch", "hẹn", "book", "khám")):
+        names = ", ".join(s.name for s in services[:4]) if services else "dịch vụ bạn cần"
+        return (f"Dạ, tôi có thể giúp bạn đặt lịch tại {clinic_name}. "
+                f"Bạn muốn đặt dịch vụ nào ({names})? Cho tôi xin họ tên và số điện thoại để đăng ký nhé ạ.")
+
+    return (f"Chào bạn, tôi là trợ lý ảo của {clinic_name}. Tôi có thể giúp bạn tra bảng giá dịch vụ, "
+            f"địa chỉ, giờ làm việc và đặt lịch hẹn nhanh chóng. Bạn cần tôi hỗ trợ thông tin gì ạ?")
 
 
-    # 2. Booking response mock
-    if "đặt lịch" in query_lower or "hẹn" in query_lower or "book" in query_lower or "khám" in query_lower:
-        entities = extract_booking_entities_mock(user_query)
-        missing = []
-        if not entities["full_name"]:
-            missing.append("Họ và Tên")
-        if not entities["phone"]:
-            missing.append("Số điện thoại liên hệ")
-        if not entities["service_name"]:
-            missing.append("Dịch vụ muốn thực hiện (Khám da/Trị mụn/Laser)")
-            
-        if missing:
-            return f"Chào bạn! Tôi rất sẵn lòng hỗ trợ bạn đặt lịch hẹn. Để đăng ký, vui lòng cung cấp giúp tôi thông tin còn thiếu: {', '.join(missing)} nhé ạ."
-            
-        # If we have some info, simulate proposal of slot
-        target_date = entities["date_str"] or (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
-        return f"Dạ, tôi ghi nhận thông tin đăng ký khám của bạn:\n- Họ tên: {entities['full_name']}\n- Số điện thoại: {entities['phone']}\n- Dịch vụ: {entities['service_name']}\nTôi xin đề xuất 3 khung giờ trống vào ngày {target_date} tại Chi nhánh Quận 10:\n1. 09:00 sáng\n2. 10:30 sáng\n3. 15:00 chiều\nBạn vui lòng chọn một khung giờ phù hợp hoặc đề xuất giờ khác nhé."
+def handle_review_reply(db: Session, conv: Conversation, user_message: str) -> Optional[str]:
+    """
+    If this patient has a pending review request, interpret the message as a 1-5 rating.
+    4-5 stars -> thank + Google review link + referral voucher code.
+    1-3 stars -> intercepted: escalate to the owner BEFORE it becomes a public bad review.
+    """
+    import random
+    import string
+    from backend.app.models.models import ReviewRequest
 
-    return "Chào bạn, tôi là trợ lý ảo CareDesk AI. Tôi có thể giúp bạn giải đáp bảng giá dịch vụ, tìm hiểu địa chỉ phòng khám hoặc hỗ trợ đặt lịch hẹn khám nhanh chóng. Bạn cần tôi hỗ trợ thông tin gì hôm nay ạ?"
+    review = db.query(ReviewRequest).filter(
+        ReviewRequest.patient_id == conv.patient_id,
+        ReviewRequest.status == "pending"
+    ).order_by(ReviewRequest.sent_at.desc()).first()
+    if not review:
+        return None
+
+    m = re.fullmatch(r"\s*([1-5])\s*(?:sao|điểm|\*)?\s*", user_message.strip())
+    if not m:
+        return None  # not a rating -> normal pipeline continues
+
+    rating = int(m.group(1))
+    review.rating = rating
+    review.answered_at = datetime.now()
+    patient = conv.patient
+    clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first() if conv.clinic_id else None
+
+    if rating >= 4:
+        review.status = "answered"
+        # Referral voucher: give the patient a shareable code
+        if patient and not patient.referral_code:
+            patient.referral_code = "CD" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        db.commit()
+
+        parts = [f"Cảm ơn bạn đã chấm {rating} sao! Đội ngũ phòng khám rất vui khi bạn hài lòng. 💚"]
+        if clinic and clinic.google_review_url:
+            parts.append(f"Nếu tiện, bạn dành 30 giây để lại đánh giá trên Google giúp phòng khám nhé: {clinic.google_review_url}")
+        if patient and patient.referral_code:
+            parts.append(f"Tặng bạn mã giới thiệu {patient.referral_code} — bạn bè nhập mã này khi đặt lịch sẽ được ưu đãi, và bạn cũng nhận voucher cho lần khám tới!")
+        return "\n".join(parts)
+
+    # Low rating: keep it in-house, alert the team immediately
+    review.status = "escalated"
+    review.feedback = user_message
+    conv.status = "handoff_requested"
+    db.commit()
+    from backend.app.services.ws_manager import ws_manager
+    ws_manager.notify(conv.clinic_id, {"type": "review_alert", "conversation_id": conv.id,
+                                       "rating": rating, "patient_id": conv.patient_id})
+    return ("Cảm ơn bạn đã phản hồi thẳng thắn — phòng khám thành thật xin lỗi vì trải nghiệm chưa tốt. "
+            "Quản lý phòng khám sẽ liên hệ trực tiếp với bạn ngay để lắng nghe và khắc phục. "
+            "Bạn có thể chia sẻ thêm điều gì khiến bạn chưa hài lòng không ạ?")
 
 
 def process_chat_message(db: Session, conversation_id: int, user_message: str) -> Tuple[str, bool]:
@@ -248,8 +363,24 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     if conv.status == "agent_active":
         return "", False  # Do not respond if human agent is active
 
+    # Suspended clinic (vendor disabled the tenant): the AI must not answer
+    if conv.clinic_id:
+        _clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first()
+        if _clinic and _clinic.is_active is False:
+            return ("Xin lỗi bạn, kênh tư vấn tự động hiện đang tạm ngưng. "
+                    "Bạn vui lòng liên hệ trực tiếp phòng khám để được hỗ trợ nhé."), False
+
+    # 1b. Review rating interception: patient replies 1-5 to a pending review ask
+    review_reply = handle_review_reply(db, conv, user_message)
+    if review_reply:
+        bot_msg = Message(conversation_id=conversation_id, sender="bot", content=review_reply,
+                          evaluation_metadata={"review_flow": True})
+        db.add(bot_msg)
+        db.commit()
+        return review_reply, False
+
     # 2. Safety filter keyword matching
-    safety_rule = check_safety_rules(db, user_message)
+    safety_rule = check_safety_rules(db, user_message, clinic_id=conv.clinic_id)
     if safety_rule:
         # Trigger handoff
         conv.status = "handoff_requested"
@@ -266,6 +397,52 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
         db.commit()
         return safety_rule.fallback_message, True
 
+    # 2b. Plan quota check: block AI replies when the clinic exhausted its monthly quota
+    if conv.clinic_id:
+        clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first()
+        if clinic and clinic.ai_quota_monthly is not None:  # None = unlimited; 0 = blocked
+            month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            used = db.query(Message).join(Conversation, Message.conversation_id == Conversation.id).filter(
+                Conversation.clinic_id == conv.clinic_id,
+                Message.sender == "bot",
+                Message.created_at >= month_start
+            ).count()
+            if used >= clinic.ai_quota_monthly:
+                quota_msg = ("Trợ lý AI của phòng khám đã đạt giới hạn hội thoại trong tháng. "
+                             "Tôi đã chuyển thông tin của bạn cho lễ tân hỗ trợ trực tiếp, "
+                             "hoặc bạn vui lòng liên hệ hotline của phòng khám nhé!")
+                conv.status = "handoff_requested"
+                bot_msg = Message(
+                    conversation_id=conversation_id, sender="bot", content=quota_msg,
+                    evaluation_metadata={"quota_exceeded": True}
+                )
+                db.add(bot_msg)
+                db.commit()
+                return quota_msg, True
+
+    # 2c. Booking flow: the AI can complete a booking end-to-end inside the chat
+    from backend.app.services.booking_flow import handle_booking
+    booking_response = handle_booking(db, conv, user_message)
+    if booking_response:
+        bot_msg = Message(
+            conversation_id=conversation_id, sender="bot", content=booking_response,
+            evaluation_metadata={"booking_flow": True}
+        )
+        db.add(bot_msg)
+        db.commit()
+        return booking_response, False
+
+    # 2d. Revenue signal: patient asked about pricing -> feeds the follow-up automation
+    lower_msg = user_message.lower()
+    if any(kw in lower_msg for kw in ("giá", "bao nhiêu", "phí")):
+        from backend.app.services.booking_flow import _resolve_service
+        from backend.app.services.events import emit_event
+        svc = _resolve_service(db, conv.clinic_id, lower_msg)
+        emit_event(db, conv.clinic_id, "price_asked", patient_id=conv.patient_id,
+                   payload={"service_id": svc.id if svc else None,
+                            "service_name": svc.name if svc else "dịch vụ da liễu"})
+        db.commit()
+
     # 3. Retrieve chat history for context
     history_msgs = db.query(Message).filter(
         Message.conversation_id == conversation_id
@@ -278,16 +455,18 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
             role = "assistant" # Count agents as assistant in history
         history_formatted.append({"role": role, "content": msg.content})
 
-    # 4. RAG context preparation
-    rag_context = query_faq_rag(db, user_message)
-    
-    # 5. Build System Prompt
-    system_prompt = f"""Bạn là trợ lý lễ tân ảo AI chuyên nghiệp của 'Phòng khám Da liễu Thẩm mỹ CareDesk'.
+    # 4. RAG context preparation (strictly scoped to this conversation's clinic)
+    clinic = resolve_clinic(db, conv.clinic_id)
+    clinic_name = clinic.name if clinic else "phòng khám"
+    rag_context = query_faq_rag(db, user_message, clinic_id=conv.clinic_id)
+
+    # 5. Build System Prompt from THIS clinic's real identity/data (no hardcoded brand)
+    system_prompt = f"""Bạn là trợ lý lễ tân ảo AI chuyên nghiệp của '{clinic_name}'.
 Quy tắc hoạt động bắt buộc:
 1. KHÔNG được chẩn đoán bệnh, KHÔNG kê đơn thuốc, KHÔNG hướng dẫn người bệnh tự xử lý tại nhà khi có dấu hiệu bất thường.
-2. LUÔN trả lời ngắn gọn, lịch sự, xưng 'CareDesk' và gọi khách hàng là 'bạn'.
-3. Chỉ được trả lời dựa trên thông tin phòng khám được cung cấp dưới đây. Tuyệt đối không tự bịa đặt thông tin hoặc giá cả dịch vụ.
-4. Nếu khách hàng muốn đặt lịch, hãy khéo léo hỏi các thông tin còn thiếu bao gồm: Họ tên, Số điện thoại, Dịch vụ muốn thực hiện (Khám da liễu, Trị mụn Chuẩn Y khoa, Laser trị sẹo rỗ). Sau khi có đủ thông tin, đề xuất giờ trống và hướng dẫn xác nhận.
+2. LUÔN trả lời ngắn gọn, lịch sự, xưng tên phòng khám và gọi khách hàng là 'bạn'.
+3. Chỉ được trả lời dựa trên thông tin phòng khám được cung cấp dưới đây. Tuyệt đối không tự bịa đặt thông tin, dịch vụ hoặc giá cả không có trong dữ liệu.
+4. Nếu khách hàng muốn đặt lịch, hãy khéo léo hỏi các thông tin còn thiếu: Họ tên, Số điện thoại, Dịch vụ muốn thực hiện (chỉ trong danh mục dưới đây). Sau khi có đủ thông tin, đề xuất giờ trống và hướng dẫn xác nhận.
 
 BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
 {rag_context}
@@ -312,10 +491,10 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
             evaluation_meta["model"] = settings.LLM_MODEL
         except Exception as e:
             print(f"OpenAI API call failed: {e}. Falling back to Mock.")
-            ai_response = call_openai_gpt_mock(system_prompt, user_message, history_formatted)
+            ai_response = call_openai_gpt_mock(db, clinic, user_message)
             evaluation_meta["fallback_mock"] = True
     else:
-        ai_response = call_openai_gpt_mock(system_prompt, user_message, history_formatted)
+        ai_response = call_openai_gpt_mock(db, clinic, user_message)
         evaluation_meta["fallback_mock"] = True
 
     # 7. Check if AI response itself implies handoff (e.g. LLM decided it can't answer or requested handoff)

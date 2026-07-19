@@ -28,6 +28,21 @@ class Settings(BaseSettings):
     
     # CORS Origins
     BACKEND_CORS_ORIGINS: list[str] = ["*"]
+
+    # SaaS Plans (bot replies per month)
+    PLAN_FREE_QUOTA: int = 200
+    PLAN_PRO_QUOTA: int = 5000
+
+    # Reminder scheduler
+    ENABLE_REMINDER_SCHEDULER: bool = os.getenv("ENABLE_REMINDER_SCHEDULER", "true").lower() == "true"
+    REMINDER_CHECK_INTERVAL_SECONDS: int = 60
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+
+    # SMS/ZNS gateway (mock when empty)
+    SMS_API_KEY: str = os.getenv("SMS_API_KEY", "")
+
+    # Rate limiting for public endpoints (requests per minute per IP)
+    RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
     
     model_config = SettingsConfigDict(
         env_file=".env",

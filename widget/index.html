@@ -198,6 +198,13 @@
   </footer>
 
   <!-- NHÚNG CHAT WIDGET CAREDESK AI -->
+  <script>
+    // Cau hinh widget cho tung phong kham (multi-tenant)
+    window.CareDeskConfig = {
+      apiBase: "http://localhost:8000",
+      clinicId: 1
+    };
+  </script>
   <script src="widget.js"></script>
 </body>
 </html>

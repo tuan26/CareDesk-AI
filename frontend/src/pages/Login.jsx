@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { API_BASE } from '../api'
 import './Login.css'
 
 export default function Login() {
@@ -19,7 +20,7 @@ export default function Login() {
       formData.append('username', email)
       formData.append('password', password)
 
-      const res = await fetch('http://localhost:8000/api/v1/auth/login', {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: formData.toString(),
@@ -32,7 +33,19 @@ export default function Login() {
 
       const data = await res.json()
       localStorage.setItem('caredesk_token', data.access_token)
-      navigate('/')
+
+      // Route by role: platform admins and chain owners have their own consoles.
+      try {
+        const meRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${data.access_token}` },
+        })
+        const me = await meRes.json()
+        if (me.is_platform_admin) navigate('/platform')
+        else if (me.organization_id) navigate('/org')
+        else navigate('/')
+      } catch {
+        navigate('/')
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -124,8 +137,9 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="login-footer">
-          © 2026 CareDesk AI · Nền tảng quản lý phòng khám thông minh
+        <div className="login-footer" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
+          <span>Chưa có tài khoản? <Link to="/register" style={{ fontWeight: 600 }}>Đăng ký phòng khám miễn phí</Link></span>
+          <span>© 2026 CareDesk AI · Nền tảng quản lý phòng khám thông minh</span>
         </div>
       </div>
     </div>
