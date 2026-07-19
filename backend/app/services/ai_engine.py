@@ -140,9 +140,12 @@ def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None) -> s
     """
     clinic = resolve_clinic(db, clinic_id)
     services = clinic_services(db, clinic)
-    context_chunks = []
 
-    # Match services based on basic keyword matching
+    # Always give the model the clinic identity (name/address/branch hours) so it
+    # can reliably answer "địa chỉ / mấy giờ" even when the query also hits a service.
+    context_chunks = [build_clinic_identity(db, clinic)]
+    matched_chunks = []
+
     query_lower = query.lower()
     for service in services:
         matched = False
@@ -158,16 +161,17 @@ def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None) -> s
             chunk = f"Dịch vụ: {service.name}. Giá: {service.price:,.0f} VNĐ. Thời lượng: {service.duration_minutes} phút. Mô tả: {service.description}."
             if service.preparation_instructions:
                 chunk += f" Chuẩn bị trước khi khám: {service.preparation_instructions}"
-            context_chunks.append(chunk)
+            matched_chunks.append(chunk)
 
             # Append FAQs of this service
             if service.faq_data:
                 for faq in service.faq_data:
-                    context_chunks.append(f"Hỏi: {faq['question']} -> Đáp: {faq['answer']}")
+                    matched_chunks.append(f"Hỏi: {faq['question']} -> Đáp: {faq['answer']}")
 
-    # If no services matched, provide this clinic's identity + brief catalogue
-    if not context_chunks:
-        context_chunks.append(build_clinic_identity(db, clinic))
+    if matched_chunks:
+        context_chunks.extend(matched_chunks)
+    else:
+        # No specific service matched: list this clinic's full catalogue briefly
         for service in services:
             context_chunks.append(f"- Dịch vụ {service.name}: giá {service.price:,.0f} VNĐ (Thời gian: {service.duration_minutes} phút).")
 
