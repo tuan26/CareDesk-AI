@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal, engine, Base
 from backend.app.models.models import (
-    User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule, Organization
+    User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule, Organization, Plan
 )
+from backend.app.core.slug import unique_slug
 from backend.app.core.security import get_password_hash
 
 def seed_db():
@@ -225,6 +226,29 @@ def seed_db():
                 is_active=True,
             ))
             db.commit()
+
+        # 12. Subscription plan catalogue (idempotent)
+        if db.query(Plan).count() == 0:
+            print("Seeding Plans...")
+            db.add_all([
+                Plan(code="free", name="Gói Free", monthly_quota=settings.PLAN_FREE_QUOTA,
+                     price=0, trial_days=0, is_active=True),
+                Plan(code="pro", name="Gói Pro (Dùng thử 14 ngày)", monthly_quota=settings.PLAN_PRO_QUOTA,
+                     price=1500000, trial_days=14, is_active=True),
+            ])
+            db.commit()
+
+        # 13. Backfill slugs + link clinics to plan rows (idempotent)
+        for org in db.query(Organization).filter(Organization.slug == None).all():  # noqa: E711
+            org.slug = unique_slug(db, Organization, org.name)
+        for c in db.query(Clinic).all():
+            if not c.slug:
+                c.slug = unique_slug(db, Clinic, c.name)
+            if c.plan_id is None:
+                plan = db.query(Plan).filter(Plan.code == (c.plan or "free")).first()
+                if plan:
+                    c.plan_id = plan.id
+        db.commit()
 
         print("Database seeded successfully!")
     except Exception as e:

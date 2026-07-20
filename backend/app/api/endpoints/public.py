@@ -7,13 +7,45 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
-from backend.app.models.models import Appointment
+from backend.app.models.models import Appointment, Clinic, Organization
+from backend.app.schemas.schemas import PublicClinicOut
 from backend.app.services.reminder import verify_public_token
 from backend.app.services.rate_limit import public_rate_limiter
 from backend.app.services.audit import log_action
 from backend.app.services.ws_manager import ws_manager
 
 router = APIRouter()
+
+
+# ---------- Per-clinic / per-chain public link resolution (slug -> tenant) ----------
+
+@router.get("/clinic-by-slug/{slug}", response_model=PublicClinicOut,
+            dependencies=[Depends(public_rate_limiter)])
+def clinic_by_slug(slug: str, db: Session = Depends(get_db)):
+    """Resolve a public clinic link /c/<slug> to the clinic the widget should talk to."""
+    clinic = db.query(Clinic).filter(Clinic.slug == slug).first()
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+    return PublicClinicOut(
+        clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
+        address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
+    )
+
+
+@router.get("/org-by-slug/{slug}", dependencies=[Depends(public_rate_limiter)])
+def org_by_slug(slug: str, db: Session = Depends(get_db)):
+    """Resolve a chain link /g/<slug> to the chain + its member clinics (each with its own link)."""
+    org = db.query(Organization).filter(Organization.slug == slug).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chuỗi phòng khám.")
+    clinics = db.query(Clinic).filter(Clinic.organization_id == org.id, Clinic.is_active == True).all()  # noqa: E712
+    return {
+        "name": org.name, "slug": org.slug,
+        "clinics": [
+            {"clinic_id": c.id, "slug": c.slug, "name": c.name, "address": c.address, "logo_url": c.logo_url}
+            for c in clinics
+        ],
+    }
 
 PAGE_TEMPLATE = """
 <!doctype html><html lang="vi"><head><meta charset="utf-8">

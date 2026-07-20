@@ -10,17 +10,37 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import get_password_hash
+from backend.app.core.slug import unique_slug
 from backend.app.api.deps import get_platform_admin
-from backend.app.models.models import User, Clinic, Organization
+from backend.app.models.models import User, Clinic, Organization, Plan
 from backend.app.schemas.schemas import (
-    PlatformClinicCreate, PlatformClinicUpdate, OrganizationCreate, OrganizationOut
+    PlatformClinicCreate, PlatformClinicUpdate, OrganizationCreate, OrganizationOut,
+    PlanCreate, PlanUpdate, PlanOut
 )
 from backend.app.services.tenant_stats import clinic_metrics, aggregate
 from backend.app.services.audit import log_action
 
 router = APIRouter()
 
-_PLAN_QUOTA = {"free": settings.PLAN_FREE_QUOTA, "pro": settings.PLAN_PRO_QUOTA}
+
+def _resolve_plan(db: Session, plan_id: Optional[int], plan_code: Optional[str]) -> Optional[Plan]:
+    if plan_id:
+        return db.query(Plan).filter(Plan.id == plan_id).first()
+    if plan_code:
+        return db.query(Plan).filter(Plan.code == plan_code).first()
+    return db.query(Plan).filter(Plan.code == "free").first()
+
+
+def _apply_plan(clinic: Clinic, plan: Plan, fee_override: Optional[float] = None) -> None:
+    """Set a clinic's quota/fee/trial from a plan row."""
+    clinic.plan_id = plan.id
+    clinic.plan = plan.code
+    clinic.ai_quota_monthly = plan.monthly_quota
+    clinic.monthly_fee = fee_override if fee_override is not None else plan.price
+    if plan.trial_days and plan.trial_days > 0:
+        clinic.trial_ends_at = datetime.now() + timedelta(days=plan.trial_days)
+    else:
+        clinic.trial_ends_at = None
 
 
 def _seed_starter_catalogue(db: Session, clinic: Clinic) -> None:
@@ -72,17 +92,18 @@ def provision_clinic(
 ) -> Any:
     if db.query(User).filter(User.email == body.owner_email).first():
         raise HTTPException(400, "Email chủ phòng khám này đã tồn tại.")
-    if body.plan not in _PLAN_QUOTA:
-        raise HTTPException(400, "Gói không hợp lệ (free | pro).")
+    plan = _resolve_plan(db, body.plan_id, body.plan)
+    if not plan:
+        raise HTTPException(400, "Gói cước không hợp lệ hoặc chưa được cấu hình.")
     if body.organization_id and not db.query(Organization).filter(Organization.id == body.organization_id).first():
         raise HTTPException(404, "Tổ chức/chuỗi không tồn tại.")
 
     clinic = Clinic(
         name=body.clinic_name, phone=body.phone, address=body.address,
-        plan=body.plan, ai_quota_monthly=_PLAN_QUOTA[body.plan],
-        monthly_fee=body.monthly_fee or 0.0, organization_id=body.organization_id,
-        is_active=True,
+        organization_id=body.organization_id, is_active=True,
+        slug=unique_slug(db, Clinic, body.clinic_name),
     )
+    _apply_plan(clinic, plan, fee_override=body.monthly_fee)
     db.add(clinic)
     db.flush()
 
@@ -117,17 +138,32 @@ def update_clinic(
     if not clinic:
         raise HTTPException(404, "Phòng khám không tồn tại.")
 
-    if body.plan is not None:
-        if body.plan not in _PLAN_QUOTA:
-            raise HTTPException(400, "Gói không hợp lệ (free | pro).")
-        clinic.plan = body.plan
-        # Reset quota to the plan default unless an explicit quota is also supplied
-        if body.ai_quota_monthly is None:
-            clinic.ai_quota_monthly = _PLAN_QUOTA[body.plan]
+    # Plan change: re-derive quota/fee/trial from the new plan
+    if body.plan_id is not None:
+        plan = db.query(Plan).filter(Plan.id == body.plan_id).first()
+        if not plan:
+            raise HTTPException(404, "Gói cước không tồn tại.")
+        _apply_plan(clinic, plan, fee_override=body.monthly_fee)
+
+    # Profile fields
+    if body.name is not None:
+        clinic.name = body.name
+    if body.phone is not None:
+        clinic.phone = body.phone
+    if body.address is not None:
+        clinic.address = body.address
+    if body.slug is not None:
+        from backend.app.core.slug import slugify
+        wanted = slugify(body.slug)
+        clinic.slug = unique_slug(db, Clinic, wanted, exclude_id=clinic.id)
+
+    # Overrides (allowed even without a plan change)
     if body.ai_quota_monthly is not None:
         clinic.ai_quota_monthly = body.ai_quota_monthly
     if body.monthly_fee is not None:
         clinic.monthly_fee = body.monthly_fee
+    if body.trial_ends_at is not None:
+        clinic.trial_ends_at = body.trial_ends_at
     if body.is_active is not None:
         clinic.is_active = body.is_active
     if body.organization_id is not None:
@@ -144,6 +180,46 @@ def update_clinic(
     return clinic_metrics(db, clinic)
 
 
+# ===== Subscription plans =====
+@router.get("/plans", response_model=list[PlanOut])
+def list_plans(db: Session = Depends(get_db), _: User = Depends(get_platform_admin)) -> Any:
+    return db.query(Plan).order_by(Plan.price.asc()).all()
+
+
+@router.post("/plans", response_model=PlanOut)
+def create_plan(body: PlanCreate, db: Session = Depends(get_db),
+                admin: User = Depends(get_platform_admin)) -> Any:
+    from backend.app.core.slug import slugify
+    code = slugify(body.code)
+    if not code:
+        raise HTTPException(400, "Mã gói không hợp lệ.")
+    if db.query(Plan).filter(Plan.code == code).first():
+        raise HTTPException(400, "Mã gói đã tồn tại.")
+    plan = Plan(code=code, name=body.name, monthly_quota=body.monthly_quota,
+                price=body.price, trial_days=body.trial_days, is_active=body.is_active)
+    db.add(plan)
+    log_action(db, admin.id, "create_plan", f"Tạo gói cước: {plan.name} ({plan.code})")
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+def update_plan(plan_id: int, body: PlanUpdate, db: Session = Depends(get_db),
+                admin: User = Depends(get_platform_admin)) -> Any:
+    plan = db.query(Plan).filter(Plan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(404, "Gói cước không tồn tại.")
+    for field in ("name", "monthly_quota", "price", "trial_days", "is_active"):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(plan, field, val)
+    log_action(db, admin.id, "update_plan", f"Cập nhật gói cước #{plan.id}: {plan.name}")
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
 # ===== Organizations / chains =====
 @router.get("/organizations")
 def list_organizations(
@@ -155,7 +231,7 @@ def list_organizations(
     for o in orgs:
         clinic_count = db.query(Clinic).filter(Clinic.organization_id == o.id).count()
         owner = db.query(User).filter(User.organization_id == o.id, User.role == "org_owner").first()
-        out.append({"id": o.id, "name": o.name, "is_active": bool(o.is_active),
+        out.append({"id": o.id, "name": o.name, "slug": o.slug, "is_active": bool(o.is_active),
                     "clinic_count": clinic_count, "owner_email": owner.email if owner else None,
                     "created_at": o.created_at.isoformat() if o.created_at else None})
     return out
@@ -170,7 +246,7 @@ def create_organization(
     if db.query(User).filter(User.email == body.owner_email).first():
         raise HTTPException(400, "Email chủ chuỗi này đã tồn tại.")
 
-    org = Organization(name=body.name, is_active=True)
+    org = Organization(name=body.name, is_active=True, slug=unique_slug(db, Organization, body.name))
     db.add(org)
     db.flush()
 

@@ -324,6 +324,32 @@ class CopilotAsk(BaseModel):
     question: str
 
 
+# ===== Subscription plans =====
+class PlanBase(BaseModel):
+    code: str
+    name: str
+    monthly_quota: int = 200
+    price: float = 0.0
+    trial_days: int = 0
+    is_active: bool = True
+
+class PlanCreate(PlanBase):
+    pass
+
+class PlanUpdate(BaseModel):
+    name: Optional[str] = None
+    monthly_quota: Optional[int] = None
+    price: Optional[float] = None
+    trial_days: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class PlanOut(PlanBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
 # ===== Platform super-admin (vendor) =====
 class PlatformClinicCreate(BaseModel):
     clinic_name: str
@@ -332,17 +358,34 @@ class PlatformClinicCreate(BaseModel):
     owner_password: str
     phone: Optional[str] = None
     address: Optional[str] = None
-    plan: str = "free"  # free | pro
-    monthly_fee: Optional[float] = None
+    plan_id: Optional[int] = None       # preferred: pick a plan row
+    plan: Optional[str] = None          # fallback: plan code
+    monthly_fee: Optional[float] = None  # override plan price if set
     organization_id: Optional[int] = None
-    seed_demo_catalogue: bool = True  # create starter branch/services/doctor
+    seed_demo_catalogue: bool = True     # create starter branch/services/doctor
 
 class PlatformClinicUpdate(BaseModel):
-    plan: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    slug: Optional[str] = None
+    plan_id: Optional[int] = None
     ai_quota_monthly: Optional[int] = None
     monthly_fee: Optional[float] = None
     is_active: Optional[bool] = None
     organization_id: Optional[int] = None
+    trial_ends_at: Optional[datetime] = None
+
+
+# ===== Public (slug resolution for per-clinic links) =====
+class PublicClinicOut(BaseModel):
+    clinic_id: int
+    slug: Optional[str] = None
+    name: str
+    logo_url: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: bool = True
 
 
 # ===== Organization (chain) =====
@@ -355,6 +398,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationOut(BaseModel):
     id: int
     name: str
+    slug: Optional[str] = None
     is_active: bool
     created_at: datetime
 

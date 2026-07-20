@@ -15,6 +15,8 @@ import AutomationPage from './pages/AutomationPage';
 import SettingsPage from './pages/SettingsPage';
 import PlatformPage from './pages/PlatformPage';
 import OrgPage from './pages/OrgPage';
+import ClinicChatPage from './pages/ClinicChatPage';
+import ChainPage from './pages/ChainPage';
 
 // Protected Route Component to prevent unauthenticated access
 const ProtectedRoute = ({ children }) => {
@@ -36,6 +38,10 @@ function App() {
         {/* Standalone admin consoles (no clinic sidebar) */}
         <Route path="/platform" element={<ProtectedRoute><PlatformPage /></ProtectedRoute>} />
         <Route path="/org" element={<ProtectedRoute><OrgPage /></ProtectedRoute>} />
+
+        {/* Public per-clinic / per-chain links (no login) */}
+        <Route path="/c/:slug" element={<ClinicChatPage />} />
+        <Route path="/g/:slug" element={<ChainPage />} />
 
         {/* Dashboard Routes wrapper with Layout and RBAC protection */}
         <Route 

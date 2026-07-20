@@ -28,10 +28,25 @@ class Organization(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    slug = Column(String, unique=True, index=True, nullable=True)  # public link /g/<slug>
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     clinics = relationship("Clinic", back_populates="organization")
+
+
+class Plan(Base):
+    """Subscription plan catalogue managed by the platform admin (name/quota/price/trial)."""
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True, nullable=False)  # free | pro | vip ...
+    name = Column(String, nullable=False)
+    monthly_quota = Column(Integer, default=200)  # AI conversations (bot replies) per month
+    price = Column(Float, default=0.0)  # đồng / month
+    trial_days = Column(Integer, default=0)  # free trial length; 0 = none
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Clinic(Base):
@@ -39,12 +54,15 @@ class Clinic(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
+    slug = Column(String, unique=True, index=True, nullable=True)  # public link /c/<slug>
     name = Column(String, nullable=False)
     logo_url = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
     cancellation_policy = Column(Text, nullable=True)
-    plan = Column(String, default="free")  # free | pro
+    plan = Column(String, default="free")  # denormalised plan code (free | pro ...)
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+    trial_ends_at = Column(DateTime(timezone=True), nullable=True)  # set while on a free trial
     ai_quota_monthly = Column(Integer, default=200)  # max bot replies per month
     monthly_fee = Column(Float, default=0.0)  # subscription fee, used for ROI math
     deposit_amount = Column(Float, default=0.0)  # 0 = deposits disabled
@@ -54,6 +72,7 @@ class Clinic(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     organization = relationship("Organization", back_populates="clinics")
+    plan_ref = relationship("Plan")
     branches = relationship("Branch", back_populates="clinic", cascade="all, delete-orphan")
     services = relationship("Service", back_populates="clinic", cascade="all, delete-orphan")
 
