@@ -54,6 +54,7 @@ def clinic_metrics(db: Session, clinic: Clinic, since: Optional[datetime] = None
         "trial_ends_at": clinic.trial_ends_at.isoformat() if clinic.trial_ends_at else None,
         "is_active": bool(clinic.is_active),
         "organization_id": clinic.organization_id,
+        "org_slug": clinic.organization.slug if clinic.organization else None,
         "monthly_fee": clinic.monthly_fee or 0.0,
         "ai_quota_monthly": clinic.ai_quota_monthly,
         "owner_email": owner.email if owner else None,

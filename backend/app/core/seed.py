@@ -5,7 +5,7 @@ from backend.app.core.database import SessionLocal, engine, Base
 from backend.app.models.models import (
     User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule, Organization, Plan
 )
-from backend.app.core.slug import unique_slug
+from backend.app.core.slug import slug_with_token
 from backend.app.core.security import get_password_hash
 
 def seed_db():
@@ -240,10 +240,10 @@ def seed_db():
 
         # 13. Backfill slugs + link clinics to plan rows (idempotent)
         for org in db.query(Organization).filter(Organization.slug == None).all():  # noqa: E711
-            org.slug = unique_slug(db, Organization, org.name)
+            org.slug = slug_with_token(db, Organization, org.name)
         for c in db.query(Clinic).all():
             if not c.slug:
-                c.slug = unique_slug(db, Clinic, c.name)
+                c.slug = slug_with_token(db, Clinic, c.name)
             if c.plan_id is None:
                 plan = db.query(Plan).filter(Plan.code == (c.plan or "free")).first()
                 if plan:

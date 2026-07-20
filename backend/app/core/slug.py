@@ -1,5 +1,6 @@
 """Vietnamese-aware slug generation for public clinic/chain links."""
 import re
+import secrets
 import unicodedata
 from sqlalchemy.orm import Session
 
@@ -30,3 +31,19 @@ def unique_slug(db: Session, model, base: str, exclude_id: int | None = None) ->
             return candidate
         i += 1
         candidate = f"{base}-{i}"
+
+
+def slug_with_token(db: Session, model, base: str, exclude_id: int | None = None) -> str:
+    """
+    Brandable but unguessable slug: '<name>-<random>' (e.g. 'phong-kham-abc-a4f9c2').
+    The random suffix prevents enumeration/guessing of other tenants' public links,
+    while keeping the URL readable. Guaranteed unique on model.slug.
+    """
+    base_slug = slugify(base)
+    while True:
+        candidate = f"{base_slug}-{secrets.token_hex(3)}"  # 6 hex chars
+        q = db.query(model).filter(model.slug == candidate)
+        if exclude_id is not None:
+            q = q.filter(model.id != exclude_id)
+        if not q.first():
+            return candidate

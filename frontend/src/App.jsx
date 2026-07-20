@@ -16,6 +16,7 @@ import SettingsPage from './pages/SettingsPage';
 import PlatformPage from './pages/PlatformPage';
 import OrgPage from './pages/OrgPage';
 import ClinicChatPage from './pages/ClinicChatPage';
+import ClinicLandingPage from './pages/ClinicLandingPage';
 import ChainPage from './pages/ChainPage';
 
 // Protected Route Component to prevent unauthenticated access
@@ -39,7 +40,12 @@ function App() {
         <Route path="/platform" element={<ProtectedRoute><PlatformPage /></ProtectedRoute>} />
         <Route path="/org" element={<ProtectedRoute><OrgPage /></ProtectedRoute>} />
 
-        {/* Public per-clinic / per-chain links (no login) */}
+        {/* Public hierarchical links (no login): org -> clinic -> chat */}
+        <Route path="/org/:orgSlug" element={<ChainPage />} />
+        <Route path="/org/:orgSlug/clinics/:clinicSlug" element={<ClinicLandingPage />} />
+        <Route path="/org/:orgSlug/clinics/:clinicSlug/chat" element={<ClinicChatPage />} />
+
+        {/* Legacy aliases so previously shared links keep working */}
         <Route path="/c/:slug" element={<ClinicChatPage />} />
         <Route path="/g/:slug" element={<ChainPage />} />
 

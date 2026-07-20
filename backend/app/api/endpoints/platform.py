@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import get_password_hash
-from backend.app.core.slug import unique_slug
+from backend.app.core.slug import slug_with_token
 from backend.app.api.deps import get_platform_admin
 from backend.app.models.models import User, Clinic, Organization, Plan
 from backend.app.schemas.schemas import (
@@ -95,13 +95,23 @@ def provision_clinic(
     plan = _resolve_plan(db, body.plan_id, body.plan)
     if not plan:
         raise HTTPException(400, "Gói cước không hợp lệ hoặc chưa được cấu hình.")
-    if body.organization_id and not db.query(Organization).filter(Organization.id == body.organization_id).first():
-        raise HTTPException(404, "Tổ chức/chuỗi không tồn tại.")
+    org_id = body.organization_id
+    if org_id:
+        if not db.query(Organization).filter(Organization.id == org_id).first():
+            raise HTTPException(404, "Tổ chức/chuỗi không tồn tại.")
+    else:
+        # Every clinic lives under an organization. A standalone partner gets a
+        # personal org (its own brand) so the /org/<org>/clinics/<clinic> URL is uniform.
+        personal = Organization(name=body.clinic_name, is_active=True,
+                                slug=slug_with_token(db, Organization, body.clinic_name))
+        db.add(personal)
+        db.flush()
+        org_id = personal.id
 
     clinic = Clinic(
         name=body.clinic_name, phone=body.phone, address=body.address,
-        organization_id=body.organization_id, is_active=True,
-        slug=unique_slug(db, Clinic, body.clinic_name),
+        organization_id=org_id, is_active=True,
+        slug=slug_with_token(db, Clinic, body.clinic_name),
     )
     _apply_plan(clinic, plan, fee_override=body.monthly_fee)
     db.add(clinic)
@@ -153,9 +163,7 @@ def update_clinic(
     if body.address is not None:
         clinic.address = body.address
     if body.slug is not None:
-        from backend.app.core.slug import slugify
-        wanted = slugify(body.slug)
-        clinic.slug = unique_slug(db, Clinic, wanted, exclude_id=clinic.id)
+        clinic.slug = slug_with_token(db, Clinic, body.slug, exclude_id=clinic.id)
 
     # Overrides (allowed even without a plan change)
     if body.ai_quota_monthly is not None:
@@ -246,7 +254,7 @@ def create_organization(
     if db.query(User).filter(User.email == body.owner_email).first():
         raise HTTPException(400, "Email chủ chuỗi này đã tồn tại.")
 
-    org = Organization(name=body.name, is_active=True, slug=unique_slug(db, Organization, body.name))
+    org = Organization(name=body.name, is_active=True, slug=slug_with_token(db, Organization, body.name))
     db.add(org)
     db.flush()
 

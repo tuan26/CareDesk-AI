@@ -100,7 +100,7 @@ export default function PlatformPage() {
       const res = await fetch(`${API_BASE}/platform/clinics`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không tạo được phòng khám');
-      flash(`Đã tạo phòng khám "${data.name}" — link: ${ORIGIN}/c/${data.slug}`);
+      flash(`Đã tạo phòng khám "${data.name}" — link chat: ${ORIGIN}/org/${data.org_slug}/clinics/${data.slug}/chat`);
       setForm(EMPTY_CLINIC);
       await loadAll();
       setTab('clinics');
@@ -125,12 +125,15 @@ export default function PlatformPage() {
     setBusy(true);
     const c = editClinic;
     const patch = {
-      name: c.name, phone: c.phone, address: c.address, slug: c.slug,
+      name: c.name, phone: c.phone, address: c.address,
       plan_id: c.plan_id ? Number(c.plan_id) : null,
       monthly_fee: c.monthly_fee === '' ? null : Number(c.monthly_fee),
       ai_quota_monthly: c.ai_quota_monthly === '' ? null : Number(c.ai_quota_monthly),
       organization_id: c.organization_id === '' || c.organization_id == null ? 0 : Number(c.organization_id),
     };
+    // Only regenerate the slug (and its random token) if the admin actually changed it,
+    // so a normal edit never breaks the existing public link.
+    if ((c.slug || '') !== (c._origSlug || '')) patch.slug = c.slug;
     const ok = await patchClinic(c.clinic_id, patch, 'Đã lưu phòng khám.');
     setBusy(false);
     if (ok) setEditClinic(null);
@@ -143,7 +146,7 @@ export default function PlatformPage() {
       const res = await fetch(`${API_BASE}/platform/organizations`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(orgForm) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không tạo được chuỗi');
-      flash(`Đã tạo chuỗi "${data.name}" — link: ${ORIGIN}/g/${data.slug}`);
+      flash(`Đã tạo chuỗi "${data.name}" — link: ${ORIGIN}/org/${data.slug}`);
       setOrgForm({ name: '', owner_name: '', owner_email: '', owner_password: '' });
       await loadAll();
     } catch (e2) { setErr(e2.message); }
@@ -227,7 +230,7 @@ export default function PlatformPage() {
                         {c.owner_email || '—'} · {c.patients} BN{c.organization_id ? ` · chuỗi #${c.organization_id}` : ''}
                         {c.trial_ends_at ? ' · 🎁 dùng thử' : ''}
                       </div>
-                      {c.slug && <CopyLink url={`${ORIGIN}/c/${c.slug}`} />}
+                      {c.slug && c.org_slug && <CopyLink url={`${ORIGIN}/org/${c.org_slug}/clinics/${c.slug}/chat`} />}
                     </td>
                     <td>
                       <span className="badge confirmed" style={{ textTransform: 'uppercase' }}>{c.plan}</span>
@@ -240,7 +243,7 @@ export default function PlatformPage() {
                     <td><span className={`badge ${c.is_active ? 'completed' : 'cancelled'}`}>{c.is_active ? 'ON' : 'Ngưng'}</span></td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <button className="btn btn-sm btn-primary" style={{ fontSize: 10 }} onClick={() => setEditClinic({ ...c })}>Sửa</button>
+                        <button className="btn btn-sm btn-primary" style={{ fontSize: 10 }} onClick={() => setEditClinic({ ...c, _origSlug: c.slug })}>Sửa</button>
                         <button className={`btn btn-sm ${c.is_active ? 'btn-danger' : 'btn-secondary'}`} style={{ fontSize: 10 }}
                           onClick={() => patchClinic(c.clinic_id, { is_active: !c.is_active }, c.is_active ? 'Đã tạm ngưng.' : 'Đã mở lại.')}>
                           {c.is_active ? 'Tạm ngưng' : 'Mở lại'}
@@ -352,7 +355,7 @@ export default function PlatformPage() {
                   <tr key={o.id}>
                     <td>
                       <div style={{ fontWeight: 600 }}>{o.name}</div>
-                      {o.slug && <CopyLink url={`${ORIGIN}/g/${o.slug}`} />}
+                      {o.slug && <CopyLink url={`${ORIGIN}/org/${o.slug}`} />}
                     </td>
                     <td style={{ fontSize: 12 }}>{o.owner_email || '—'}</td>
                     <td><span className="badge confirmed">{o.clinic_count}</span></td>
@@ -388,8 +391,9 @@ export default function PlatformPage() {
                 <input className="form-control" value={editClinic.phone || ''} onChange={e => setEditClinic({ ...editClinic, phone: e.target.value })} /></label>
               <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Địa chỉ
                 <input className="form-control" value={editClinic.address || ''} onChange={e => setEditClinic({ ...editClinic, address: e.target.value })} /></label>
-              <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Slug (link công khai): {ORIGIN}/c/
-                <input className="form-control" value={editClinic.slug || ''} onChange={e => setEditClinic({ ...editClinic, slug: e.target.value })} /></label>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Mã link phòng khám (slug) — đổi sẽ sinh mã ngẫu nhiên mới & tạo link mới
+                <input className="form-control" value={editClinic.slug || ''} onChange={e => setEditClinic({ ...editClinic, slug: e.target.value })} />
+                {editClinic.org_slug && <div style={{ fontSize: 10, marginTop: 2 }}>Link hiện tại: /org/{editClinic.org_slug}/clinics/{editClinic._origSlug || editClinic.slug}/chat</div>}</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <label style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>Gói
                   <select className="form-control" value={editClinic.plan_id || ''} onChange={e => setEditClinic({ ...editClinic, plan_id: e.target.value })}>

@@ -8,7 +8,10 @@ import { API_BASE } from '../api';
  * scoped to that clinic (same endpoints the embeddable widget uses).
  */
 export default function ClinicChatPage() {
-  const { slug } = useParams();
+  const { slug, orgSlug, clinicSlug } = useParams();
+  const resolveUrl = orgSlug && clinicSlug
+    ? `${API_BASE}/public/org/${orgSlug}/clinics/${clinicSlug}`
+    : `${API_BASE}/public/clinic-by-slug/${slug}`;
   const [clinic, setClinic] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [lead, setLead] = useState({ full_name: '', phone: '', consent: false });
@@ -22,12 +25,12 @@ export default function ClinicChatPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/public/clinic-by-slug/${slug}`);
+        const res = await fetch(resolveUrl);
         if (!res.ok) { setNotFound(true); return; }
         setClinic(await res.json());
       } catch { setNotFound(true); }
     })();
-  }, [slug]);
+  }, [resolveUrl]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -73,7 +76,7 @@ export default function ClinicChatPage() {
     <div style={sx.page}><div style={sx.card}>
       <div style={{ fontSize: 44 }}>🔍</div>
       <h2 style={{ color: '#0f172a' }}>Không tìm thấy phòng khám</h2>
-      <p style={{ color: '#64748b' }}>Liên kết <code>/c/{slug}</code> không tồn tại hoặc đã thay đổi.</p>
+      <p style={{ color: '#64748b' }}>Liên kết này không tồn tại hoặc đã thay đổi.</p>
     </div></div>
   );
   if (!clinic) return <div style={sx.page}><div style={sx.card}>Đang tải...</div></div>;

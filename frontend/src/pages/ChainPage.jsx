@@ -4,19 +4,21 @@ import { API_BASE } from '../api';
 
 /** Public chain landing /g/<slug>: lists member clinics, each with its own link. */
 export default function ChainPage() {
-  const { slug } = useParams();
+  // Supports both /org/:orgSlug (canonical) and /g/:slug (legacy alias)
+  const { slug, orgSlug } = useParams();
+  const chainSlug = orgSlug || slug;
   const [org, setOrg] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/public/org-by-slug/${slug}`);
+        const res = await fetch(`${API_BASE}/public/org-by-slug/${chainSlug}`);
         if (!res.ok) { setNotFound(true); return; }
         setOrg(await res.json());
       } catch { setNotFound(true); }
     })();
-  }, [slug]);
+  }, [chainSlug]);
 
   if (notFound) return (
     <div style={sx.page}><div style={sx.card}>
@@ -36,12 +38,12 @@ export default function ChainPage() {
         </p>
         <div style={{ display: 'grid', gap: 12 }}>
           {org.clinics.map(c => (
-            <Link key={c.clinic_id} to={`/c/${c.slug}`} style={sx.clinicCard}>
+            <Link key={c.clinic_id} to={`/org/${org.slug}/clinics/${c.slug}`} style={sx.clinicCard}>
               <div>
                 <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 15 }}>{c.name}</div>
                 {c.address && <div style={{ color: '#64748b', fontSize: 13 }}>{c.address}</div>}
               </div>
-              <span style={sx.cta}>Trò chuyện →</span>
+              <span style={sx.cta}>Xem / Chat →</span>
             </Link>
           ))}
           {org.clinics.length === 0 && (

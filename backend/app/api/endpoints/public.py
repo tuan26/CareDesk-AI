@@ -32,6 +32,24 @@ def clinic_by_slug(slug: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/org/{org_slug}/clinics/{clinic_slug}", response_model=PublicClinicOut,
+            dependencies=[Depends(public_rate_limiter)])
+def clinic_in_org(org_slug: str, clinic_slug: str, db: Session = Depends(get_db)):
+    """Hierarchical resolve: the clinic MUST belong to the org named in the URL."""
+    org = db.query(Organization).filter(Organization.slug == org_slug).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chuỗi phòng khám.")
+    clinic = db.query(Clinic).filter(
+        Clinic.slug == clinic_slug, Clinic.organization_id == org.id
+    ).first()
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Phòng khám không thuộc chuỗi này.")
+    return PublicClinicOut(
+        clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
+        address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
+    )
+
+
 @router.get("/org-by-slug/{slug}", dependencies=[Depends(public_rate_limiter)])
 def org_by_slug(slug: str, db: Session = Depends(get_db)):
     """Resolve a chain link /g/<slug> to the chain + its member clinics (each with its own link)."""
