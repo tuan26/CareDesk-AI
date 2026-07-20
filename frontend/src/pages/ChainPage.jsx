@@ -38,7 +38,7 @@ export default function ChainPage() {
         </p>
         <div style={{ display: 'grid', gap: 12 }}>
           {org.clinics.map(c => (
-            <Link key={c.clinic_id} to={`/org/${org.slug}/clinics/${c.slug}`} style={sx.clinicCard}>
+            <Link key={c.clinic_id} to={`/book/${org.slug}/${c.slug}`} style={sx.clinicCard}>
               <div>
                 <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 15 }}>{c.name}</div>
                 {c.address && <div style={{ color: '#64748b', fontSize: 13 }}>{c.address}</div>}

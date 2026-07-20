@@ -36,14 +36,15 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<RegisterPage />} />
 
-        {/* Standalone admin consoles (no clinic sidebar) */}
+        {/* Protected admin consoles (login required, no clinic sidebar) */}
         <Route path="/platform" element={<ProtectedRoute><PlatformPage /></ProtectedRoute>} />
         <Route path="/org" element={<ProtectedRoute><OrgPage /></ProtectedRoute>} />
+        <Route path="/org/:orgSlug" element={<ProtectedRoute><OrgPage /></ProtectedRoute>} />
 
-        {/* Public hierarchical links (no login): org -> clinic -> chat */}
-        <Route path="/org/:orgSlug" element={<ChainPage />} />
-        <Route path="/org/:orgSlug/clinics/:clinicSlug" element={<ClinicLandingPage />} />
-        <Route path="/org/:orgSlug/clinics/:clinicSlug/chat" element={<ClinicChatPage />} />
+        {/* Public patient links (NO login): /book/<org>/<clinic>/chat */}
+        <Route path="/book/:orgSlug" element={<ChainPage />} />
+        <Route path="/book/:orgSlug/:clinicSlug" element={<ClinicLandingPage />} />
+        <Route path="/book/:orgSlug/:clinicSlug/chat" element={<ClinicChatPage />} />
 
         {/* Legacy aliases so previously shared links keep working */}
         <Route path="/c/:slug" element={<ClinicChatPage />} />

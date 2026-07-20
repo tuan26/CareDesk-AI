@@ -33,16 +33,22 @@ export default function Login() {
 
       const data = await res.json()
       localStorage.setItem('caredesk_token', data.access_token)
+      // Clear any stale "managing a clinic" state from a previous session.
+      localStorage.removeItem('caredesk_org_token')
+      localStorage.removeItem('caredesk_active_clinic')
 
       // Route by role: platform admins and chain owners have their own consoles.
       try {
-        const meRes = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${data.access_token}` },
-        })
-        const me = await meRes.json()
-        if (me.is_platform_admin) navigate('/platform')
-        else if (me.organization_id) navigate('/org')
-        else navigate('/')
+        const headers = { Authorization: `Bearer ${data.access_token}` }
+        const me = await (await fetch(`${API_BASE}/auth/me`, { headers })).json()
+        if (me.is_platform_admin) {
+          navigate('/platform')
+        } else if (me.organization_id) {
+          const org = await (await fetch(`${API_BASE}/org/me`, { headers })).json().catch(() => null)
+          navigate(org?.slug ? `/org/${org.slug}` : '/org')
+        } else {
+          navigate('/')
+        }
       } catch {
         navigate('/')
       }

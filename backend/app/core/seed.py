@@ -181,7 +181,13 @@ def seed_db():
         # 8. Multi-tenant backfill: bind seeded users & doctors to the demo clinic (Pro plan)
         clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
         if clinic:
-            db.query(User).filter(User.clinic_id == None).update({User.clinic_id: clinic.id})  # noqa: E711
+            # Only bind the demo clinic's OWN staff. Never touch platform admins or
+            # chain owners — their clinic_id is intentionally NULL (runs every startup).
+            db.query(User).filter(
+                User.clinic_id == None,              # noqa: E711
+                User.is_platform_admin == False,     # noqa: E712
+                User.organization_id == None,        # noqa: E711
+            ).update({User.clinic_id: clinic.id}, synchronize_session=False)
             db.query(Doctor).filter(Doctor.clinic_id == None).update({Doctor.clinic_id: clinic.id})  # noqa: E711
             if clinic.plan != "pro":
                 clinic.plan = "pro"

@@ -33,6 +33,22 @@ def get_current_user(
     user = db.query(User).filter(User.email == token_data.email).first()
     if not user:
         raise credentials_exception
+
+    # Scoped token: a chain owner (or platform admin) "entering" a clinic acts on it
+    # with owner-level access. The clinic MUST belong to their org (re-validated here).
+    act_clinic_id = payload.get("act_clinic_id")
+    if act_clinic_id:
+        clinic = db.query(Clinic).filter(Clinic.id == act_clinic_id).first()
+        allowed = clinic and (
+            user.is_platform_admin or
+            (user.organization_id and clinic.organization_id == user.organization_id)
+        )
+        if allowed:
+            # Detach so the in-memory scope override is never persisted to the DB.
+            db.expunge(user)
+            user.clinic_id = clinic.id
+            if user.role == "org_owner":
+                user.role = "owner"
     return user
 
 

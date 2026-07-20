@@ -100,7 +100,7 @@ export default function PlatformPage() {
       const res = await fetch(`${API_BASE}/platform/clinics`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không tạo được phòng khám');
-      flash(`Đã tạo phòng khám "${data.name}" — link chat: ${ORIGIN}/org/${data.org_slug}/clinics/${data.slug}/chat`);
+      flash(`Đã tạo phòng khám "${data.name}" — link chat: ${ORIGIN}/book/${data.org_slug}/${data.slug}/chat`);
       setForm(EMPTY_CLINIC);
       await loadAll();
       setTab('clinics');
@@ -146,7 +146,7 @@ export default function PlatformPage() {
       const res = await fetch(`${API_BASE}/platform/organizations`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(orgForm) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không tạo được chuỗi');
-      flash(`Đã tạo chuỗi "${data.name}" — link: ${ORIGIN}/org/${data.slug}`);
+      flash(`Đã tạo chuỗi "${data.name}" — link công khai: ${ORIGIN}/book/${data.slug}`);
       setOrgForm({ name: '', owner_name: '', owner_email: '', owner_password: '' });
       await loadAll();
     } catch (e2) { setErr(e2.message); }
@@ -230,7 +230,7 @@ export default function PlatformPage() {
                         {c.owner_email || '—'} · {c.patients} BN{c.organization_id ? ` · chuỗi #${c.organization_id}` : ''}
                         {c.trial_ends_at ? ' · 🎁 dùng thử' : ''}
                       </div>
-                      {c.slug && c.org_slug && <CopyLink url={`${ORIGIN}/org/${c.org_slug}/clinics/${c.slug}/chat`} />}
+                      {c.slug && c.org_slug && <CopyLink url={`${ORIGIN}/book/${c.org_slug}/${c.slug}/chat`} />}
                     </td>
                     <td>
                       <span className="badge confirmed" style={{ textTransform: 'uppercase' }}>{c.plan}</span>
@@ -355,7 +355,7 @@ export default function PlatformPage() {
                   <tr key={o.id}>
                     <td>
                       <div style={{ fontWeight: 600 }}>{o.name}</div>
-                      {o.slug && <CopyLink url={`${ORIGIN}/org/${o.slug}`} />}
+                      {o.slug && <CopyLink url={`${ORIGIN}/book/${o.slug}`} />}
                     </td>
                     <td style={{ fontSize: 12 }}>{o.owner_email || '—'}</td>
                     <td><span className="badge confirmed">{o.clinic_count}</span></td>
@@ -393,7 +393,7 @@ export default function PlatformPage() {
                 <input className="form-control" value={editClinic.address || ''} onChange={e => setEditClinic({ ...editClinic, address: e.target.value })} /></label>
               <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Mã link phòng khám (slug) — đổi sẽ sinh mã ngẫu nhiên mới & tạo link mới
                 <input className="form-control" value={editClinic.slug || ''} onChange={e => setEditClinic({ ...editClinic, slug: e.target.value })} />
-                {editClinic.org_slug && <div style={{ fontSize: 10, marginTop: 2 }}>Link hiện tại: /org/{editClinic.org_slug}/clinics/{editClinic._origSlug || editClinic.slug}/chat</div>}</label>
+                {editClinic.org_slug && <div style={{ fontSize: 10, marginTop: 2 }}>Link hiện tại: /book/{editClinic.org_slug}/{editClinic._origSlug || editClinic.slug}/chat</div>}</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <label style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>Gói
                   <select className="form-control" value={editClinic.plan_id || ''} onChange={e => setEditClinic({ ...editClinic, plan_id: e.target.value })}>

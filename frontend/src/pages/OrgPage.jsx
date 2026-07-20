@@ -23,8 +23,24 @@ export default function OrgPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  const [entering, setEntering] = useState(0);
   const navigate = useNavigate();
   const authFail = () => { localStorage.removeItem('caredesk_token'); navigate('/login'); };
+
+  // Step into a clinic: get a scoped token, swap it in, open the full clinic dashboard.
+  const manageClinic = async (clinicId, clinicName) => {
+    setEntering(clinicId); setErr('');
+    try {
+      const res = await fetch(`${API_BASE}/org/enter-clinic/${clinicId}`, { method: 'POST', headers: getAuthHeaders() });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Không vào được phòng khám');
+      localStorage.setItem('caredesk_org_token', localStorage.getItem('caredesk_token')); // keep chain-owner token
+      localStorage.setItem('caredesk_token', d.access_token); // scoped clinic token
+      localStorage.setItem('caredesk_active_clinic', JSON.stringify({ id: clinicId, name: clinicName, orgSlug: org?.slug }));
+      navigate('/');
+    } catch (e) { setErr(e.message); }
+    finally { setEntering(0); }
+  };
 
   useEffect(() => {
     (async () => {
@@ -79,7 +95,7 @@ export default function OrgPage() {
         <div className="card-header"><h2>Chi tiết theo phòng khám</h2></div>
         <table className="custom-table">
           <thead>
-            <tr><th>Phòng khám</th><th>Gói</th><th>Bệnh nhân</th><th>Lịch hẹn (tháng)</th><th>Doanh thu (tháng)</th><th>AI tạo ra</th><th>Trạng thái</th></tr>
+            <tr><th>Phòng khám</th><th>Gói</th><th>BN</th><th>Lịch hẹn</th><th>Doanh thu</th><th>AI</th><th>TT</th><th>Quản lý</th></tr>
           </thead>
           <tbody>
             {clinics.map(c => (
@@ -87,19 +103,25 @@ export default function OrgPage() {
                 <td>
                   <div style={{ fontWeight: 600 }}>{c.name}</div>
                   {c.slug && c.org_slug && (
-                    <a href={`/org/${c.org_slug}/clinics/${c.slug}/chat`} target="_blank" rel="noreferrer"
+                    <a href={`/book/${c.org_slug}/${c.slug}/chat`} target="_blank" rel="noreferrer"
                       style={{ fontSize: 11, color: 'var(--primary-color)' }}>🔗 Link chat công khai</a>
                   )}
                 </td>
                 <td><span className="badge confirmed" style={{ textTransform: 'uppercase' }}>{c.plan}</span></td>
                 <td>{c.patients}</td>
-                <td>{c.appointments_this_period} <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({c.completed_this_period} xong)</span></td>
+                <td>{c.appointments_this_period} <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({c.completed_this_period}✓)</span></td>
                 <td style={{ fontWeight: 600 }}>{fmtMoney(c.revenue_this_period)}</td>
                 <td>{fmtMoney(c.ai_revenue_this_period)}</td>
-                <td><span className={`badge ${c.is_active ? 'completed' : 'cancelled'}`}>{c.is_active ? 'Hoạt động' : 'Tạm ngưng'}</span></td>
+                <td><span className={`badge ${c.is_active ? 'completed' : 'cancelled'}`}>{c.is_active ? 'ON' : 'Ngưng'}</span></td>
+                <td>
+                  <button className="btn btn-sm btn-primary" style={{ fontSize: 11 }} disabled={entering === c.clinic_id}
+                    onClick={() => manageClinic(c.clinic_id, c.name)}>
+                    {entering === c.clinic_id ? '...' : 'Quản lý →'}
+                  </button>
+                </td>
               </tr>
             ))}
-            {clinics.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>Chuỗi chưa có phòng khám nào.</td></tr>}
+            {clinics.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>Chuỗi chưa có phòng khám nào.</td></tr>}
           </tbody>
         </table>
       </div>

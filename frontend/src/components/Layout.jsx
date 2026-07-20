@@ -4,6 +4,7 @@ import { API_BASE } from '../api';
 
 export default function Layout() {
   const [user, setUser] = useState(null);
+  const [actingClinic, setActingClinic] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -24,10 +25,13 @@ export default function Layout() {
           throw new Error('Unauthorized');
         }
         const data = await response.json();
-        // Platform admins / chain owners have no clinic data — send them to their console.
-        if (data.is_platform_admin) { navigate('/platform'); return; }
-        if (data.organization_id) { navigate('/org'); return; }
+        // A chain owner "managing" a clinic carries a scoped token + this marker.
+        const acting = JSON.parse(localStorage.getItem('caredesk_active_clinic') || 'null');
+        // Platform admins / chain owners (when NOT inside a clinic) go to their console.
+        if (data.is_platform_admin && !acting) { navigate('/platform'); return; }
+        if (data.organization_id && !acting) { navigate('/org'); return; }
         setUser(data);
+        setActingClinic(acting);
       } catch (err) {
         localStorage.removeItem('caredesk_token');
         navigate('/login');
@@ -39,7 +43,19 @@ export default function Layout() {
 
   const handleLogout = () => {
     localStorage.removeItem('caredesk_token');
+    localStorage.removeItem('caredesk_org_token');
+    localStorage.removeItem('caredesk_active_clinic');
     navigate('/login');
+  };
+
+  // Return a chain owner from a clinic back to their chain console.
+  const backToChain = () => {
+    const base = localStorage.getItem('caredesk_org_token');
+    if (base) localStorage.setItem('caredesk_token', base);
+    localStorage.removeItem('caredesk_org_token');
+    const orgSlug = actingClinic?.orgSlug;
+    localStorage.removeItem('caredesk_active_clinic');
+    navigate(orgSlug ? `/org/${orgSlug}` : '/org');
   };
 
   if (!user) {
@@ -134,6 +150,17 @@ export default function Layout() {
             </div>
           </div>
         </header>
+
+        {actingClinic && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            padding: '8px 24px', background: '#0f766e', color: '#fff', fontSize: 13
+          }}>
+            <span>🔗 Bạn đang quản lý <b>{actingClinic.name}</b> (thuộc chuỗi của bạn).</span>
+            <button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)' }}
+              onClick={backToChain}>← Về Console chuỗi</button>
+          </div>
+        )}
 
         <section className="page-body">
           <Outlet />

@@ -39,10 +39,10 @@ export default function ClinicLandingPage() {
         {!clinic.is_active && (
           <p style={{ color: '#dc2626', fontSize: 13, marginTop: 12 }}>Phòng khám đang tạm ngưng nhận tư vấn tự động.</p>
         )}
-        <Link to={`/org/${orgSlug}/clinics/${clinicSlug}/chat`} style={sx.btn}>
+        <Link to={`/book/${orgSlug}/${clinicSlug}/chat`} style={sx.btn}>
           💬 Trò chuyện với trợ lý ảo
         </Link>
-        <Link to={`/org/${orgSlug}`} style={sx.back}>← Xem các cơ sở khác trong chuỗi</Link>
+        <Link to={`/book/${orgSlug}`} style={sx.back}>← Xem các cơ sở khác trong chuỗi</Link>
       </div>
     </div>
   );
