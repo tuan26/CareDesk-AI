@@ -163,6 +163,10 @@ def update_clinic(
         clinic.phone = body.phone
     if body.address is not None:
         clinic.address = body.address
+    if body.logo_url is not None:
+        clinic.logo_url = body.logo_url
+    if body.og_image_url is not None:
+        clinic.og_image_url = body.og_image_url
     if body.slug is not None:
         # No-op when unchanged: a public URL must never churn just because the
         # edit form resubmitted the same slug. The old slug stays registered for

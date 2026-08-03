@@ -12,7 +12,7 @@ from backend.app.core.migrate import run_migrations
 from backend.app.core.seed import seed_db
 from backend.app.api.endpoints import (
     auth, clinic, appointment, chat, webhooks, reports, public, ws,
-        packages, automations, copilot, platform, org, booking_requests, landing
+        packages, automations, copilot, platform, org, booking_requests, landing, seo
 )
 from backend.app.services.ws_manager import ws_manager
 from backend.app.services.reminder import reminder_loop
@@ -32,6 +32,14 @@ if settings.is_production and "SUPER_SECRET_KEY" in settings.SECRET_KEY:
     raise RuntimeError(
         "SECRET_KEY is still the default placeholder. Set a real SECRET_KEY "
         "env var before running with ENVIRONMENT=production."
+    )
+if settings.is_production and "localhost" in settings.PUBLIC_BASE_URL:
+    # Every canonical link, og:url and sitemap entry is built from this. Left at
+    # localhost, Facebook/Zalo previews and Google's index point at nothing.
+    raise RuntimeError(
+        "PUBLIC_BASE_URL still points at localhost. Set it to the real public "
+        "domain before running with ENVIRONMENT=production — canonical URLs, "
+        "og:url and sitemap.xml are all derived from it."
     )
 
 # Initialize FastAPI app
@@ -116,6 +124,10 @@ app.include_router(booking_requests.router, prefix=f"{settings.API_V1_STR}/booki
 # /book/* rather than under the JSON API prefix. nginx/vite proxy this path to
 # the backend; everything else still goes to the SPA.
 app.include_router(landing.router, prefix="/book", tags=["Public Landing"])
+
+# robots.txt / sitemap.xml live at the site root, so they are mounted
+# without a prefix (and proxied there by nginx/vite).
+app.include_router(seo.router, tags=["SEO"])
 
 @app.get("/")
 def read_root():

@@ -44,6 +44,7 @@ class TokenData(BaseModel):
 class ClinicBase(BaseModel):
     name: str
     logo_url: Optional[str] = None
+    og_image_url: Optional[str] = None  # social link preview, ~1200x630
     phone: Optional[str] = None
     address: Optional[str] = None
     cancellation_policy: Optional[str] = None
@@ -389,6 +390,8 @@ class PlatformClinicUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    logo_url: Optional[str] = None
+    og_image_url: Optional[str] = None
     slug: Optional[str] = None
     plan_id: Optional[int] = None
     ai_quota_monthly: Optional[int] = None

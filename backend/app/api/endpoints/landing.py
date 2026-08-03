@@ -69,8 +69,8 @@ def _brand_json_ld(brand: BrandView, path: str) -> str:
         "name": brand.name,
         "url": _abs(path),
     }
-    if brand.logo_url:
-        data["image"] = brand.logo_url
+    if brand.og_image_url:
+        data["image"] = brand.og_image_url
     if brand.phone:
         data["telephone"] = brand.phone
     if brand.address:
@@ -97,8 +97,8 @@ def _branch_json_ld(brand: BrandView, branch: BranchView, path: str) -> str:
         "url": _abs(path),
         "address": {"@type": "PostalAddress", "streetAddress": branch.address},
     }
-    if brand.logo_url:
-        data["image"] = brand.logo_url
+    if brand.og_image_url:
+        data["image"] = brand.og_image_url
     if branch.phone or brand.phone:
         data["telephone"] = branch.phone or brand.phone
     if branch.working_hours:

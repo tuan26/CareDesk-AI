@@ -57,6 +57,7 @@ class BrandView:
     slug: str
     name: str
     logo_url: Optional[str]
+    og_image_url: Optional[str]
     address: Optional[str]
     phone: Optional[str]
     clinic_ids: list[int]
@@ -158,6 +159,12 @@ def _build_brand(db: Session, *, org: Organization | None, clinics: list[Clinic]
         slug=slug,
         name=name,
         logo_url=next((c.logo_url for c in clinics if c.logo_url), None),
+        # Prefer a purpose-made share image; a logo is better than nothing but
+        # is usually too small for crawlers to accept.
+        og_image_url=next(
+            (c.og_image_url for c in clinics if c.og_image_url),
+            next((c.logo_url for c in clinics if c.logo_url), None),
+        ),
         address=primary.address,
         phone=primary.phone,
         clinic_ids=clinic_ids,

@@ -125,7 +125,7 @@ export default function PlatformPage() {
     setBusy(true);
     const c = editClinic;
     const patch = {
-      name: c.name, phone: c.phone, address: c.address,
+      name: c.name, phone: c.phone, address: c.address, og_image_url: c.og_image_url || '',
       plan_id: c.plan_id ? Number(c.plan_id) : null,
       monthly_fee: c.monthly_fee === '' ? null : Number(c.monthly_fee),
       ai_quota_monthly: c.ai_quota_monthly === '' ? null : Number(c.ai_quota_monthly),
@@ -391,6 +391,9 @@ export default function PlatformPage() {
                 <input className="form-control" value={editClinic.phone || ''} onChange={e => setEditClinic({ ...editClinic, phone: e.target.value })} /></label>
               <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Địa chỉ
                 <input className="form-control" value={editClinic.address || ''} onChange={e => setEditClinic({ ...editClinic, address: e.target.value })} /></label>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Ảnh chia sẻ mạng xã hội (og:image) — URL ảnh ~1200×630
+                <input className="form-control" placeholder="https://..." value={editClinic.og_image_url || ''} onChange={e => setEditClinic({ ...editClinic, og_image_url: e.target.value })} />
+                <div style={{ fontSize: 10, marginTop: 2 }}>Facebook/Zalo bỏ qua ảnh nhỏ hơn 200×200. Để trống sẽ dùng tạm logo.</div></label>
               <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Mã link phòng khám (slug) — đổi sẽ sinh mã ngẫu nhiên mới & tạo link mới
                 <input className="form-control" value={editClinic.slug || ''} onChange={e => setEditClinic({ ...editClinic, slug: e.target.value })} />
                 {editClinic.org_slug && <div style={{ fontSize: 10, marginTop: 2 }}>Link công khai: /book/{editClinic.org_slug}</div>}</label>

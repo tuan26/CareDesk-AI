@@ -85,6 +85,10 @@ class Clinic(Base):
     slug = Column(String, unique=True, index=True, nullable=True)  # public link /c/<slug>
     name = Column(String, nullable=False)
     logo_url = Column(String, nullable=True)
+    # Social link preview. A logo is the wrong shape for this — crawlers want
+    # ~1200x630 and ignore images under 200x200 — so it gets its own field and
+    # falls back to logo_url only when unset.
+    og_image_url = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
     cancellation_policy = Column(Text, nullable=True)

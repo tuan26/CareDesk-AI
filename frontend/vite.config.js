@@ -9,6 +9,8 @@ export default defineConfig({
       // Public landing pages are server-rendered by FastAPI (crawlers don't run
       // JS). Everything else — including /chat/* — stays on the SPA.
       '/book': { target: 'http://localhost:8000', changeOrigin: true },
+      '/sitemap.xml': { target: 'http://localhost:8000', changeOrigin: true },
+      '/robots.txt': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 })
