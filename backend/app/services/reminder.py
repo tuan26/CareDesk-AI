@@ -9,11 +9,14 @@ self-confirm without logging in -> directly attacks the no-show rate.
 import asyncio
 import hashlib
 import hmac
+import logging
 from datetime import datetime, timedelta
 from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Appointment, ReminderLog
 from backend.app.services.channel_gateway import send_zns_or_sms
+
+logger = logging.getLogger(__name__)
 
 REMINDER_KINDS = [("24h", 24), ("2h", 2)]
 
@@ -84,8 +87,8 @@ async def check_and_send_reminders():
                     sent_count += 1
 
                 db.commit()
-    except Exception as e:
-        print(f"[REMINDER ERROR] {e}")
+    except Exception:
+        logger.exception("Reminder scheduler tick failed")
         db.rollback()
     finally:
         db.close()
@@ -127,8 +130,8 @@ async def send_daily_digest():
             owner = db.query(User).filter(User.clinic_id == clinic.id, User.role == "owner").first()
             if owner:
                 await send_email_notification(owner.email, "CareDesk AI - Ban tin van hanh", f"<p>{text}</p>")
-    except Exception as e:
-        print(f"[DIGEST ERROR] {e}")
+    except Exception:
+        logger.exception("Daily digest failed")
     finally:
         db.close()
 
@@ -137,7 +140,7 @@ async def reminder_loop():
     """Unified background scheduler: reminders + automation engine + daily digest."""
     from backend.app.services.events import run_engine_tick, run_recurring_rules
 
-    print(f"[SCHEDULER] started (every {settings.REMINDER_CHECK_INTERVAL_SECONDS}s)")
+    logger.info("Scheduler started (every %ss)", settings.REMINDER_CHECK_INTERVAL_SECONDS)
     last_recurring_run = None
     last_digest_slot = None
 
@@ -153,8 +156,8 @@ async def reminder_loop():
             if last_recurring_run is None or (now - last_recurring_run).total_seconds() > 3600:
                 run_recurring_rules(db)
                 last_recurring_run = now
-        except Exception as e:
-            print(f"[ENGINE ERROR] {e}")
+        except Exception:
+            logger.exception("Automation engine tick failed")
         finally:
             db.close()
 

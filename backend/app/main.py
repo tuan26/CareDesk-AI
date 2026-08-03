@@ -1,16 +1,38 @@
 import asyncio
+import os
 import sys
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from backend.app.core.config import settings
-from backend.app.core.database import engine, Base
+from backend.app.core.logging_config import setup_logging
+from backend.app.core.database import engine
+from backend.app.core.migrate import run_migrations
 from backend.app.core.seed import seed_db
 from backend.app.api.endpoints import (
     auth, clinic, appointment, chat, webhooks, reports, public, ws,
-    packages, automations, copilot, platform, org
+        packages, automations, copilot, platform, org, booking_requests, landing
 )
 from backend.app.services.ws_manager import ws_manager
 from backend.app.services.reminder import reminder_loop
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+# Fail fast on misconfiguration that would otherwise silently weaken
+# production security. Checked at import time, before the app (and its
+# permissive-looking CORS middleware) is even constructed.
+if settings.is_production and "*" in settings.cors_origins_list:
+    raise RuntimeError(
+        "BACKEND_CORS_ORIGINS='*' is not allowed when ENVIRONMENT=production. "
+        "Set explicit, comma-separated origins instead."
+    )
+if settings.is_production and "SUPER_SECRET_KEY" in settings.SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY is still the default placeholder. Set a real SECRET_KEY "
+        "env var before running with ENVIRONMENT=production."
+    )
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -22,7 +44,7 @@ app = FastAPI(
 # Set CORS origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,17 +58,36 @@ for stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# Startup: create tables, seed data, wire realtime + reminder scheduler
+# Startup: apply migrations, seed data, wire realtime + reminder scheduler
 @app.on_event("startup")
 async def startup_db_setup():
-    if "SUPER_SECRET_KEY" in settings.SECRET_KEY:
-        print("[SECURITY WARNING] SECRET_KEY dang dung gia tri mac dinh. "
-              "Bat buoc dat bien moi truong SECRET_KEY khi chay production!")
+    if not settings.is_production and "SUPER_SECRET_KEY" in settings.SECRET_KEY:
+        logger.warning(
+            "SECRET_KEY dang dung gia tri mac dinh. Bat buoc dat bien moi "
+            "truong SECRET_KEY khi chay production!"
+        )
 
-    print("Initializing Database...")
-    Base.metadata.create_all(bind=engine)
+    logger.info("Initializing database...")
+    run_migrations()
+    setup_logging()  # alembic's fileConfig just reset root logging - restore it
     seed_db()
-    print("Database initialization completed!")
+    logger.info("Database initialization completed.")
+
+    # The reminder scheduler and the in-memory rate limiter both keep their
+    # state in this process. Running more than one uvicorn worker means each
+    # worker runs its own scheduler (duplicate reminders/digests) and its own
+    # rate-limit counters (limits effectively multiply by worker count).
+    worker_count = os.getenv("WEB_CONCURRENCY") or os.getenv("UVICORN_WORKERS")
+    if worker_count and int(worker_count) > 1 and settings.ENABLE_REMINDER_SCHEDULER:
+        logger.warning(
+            "ENABLE_REMINDER_SCHEDULER is on with %s workers configured. The "
+            "reminder scheduler and rate limiter are single-process/in-memory: "
+            "each worker will run its own scheduler and duplicate reminders/"
+            "digests, and rate limits apply per-worker. Run a single worker, "
+            "or disable the scheduler on all but one and move rate limiting "
+            "to a shared store (e.g. Redis) before scaling out.",
+            worker_count,
+        )
 
     # Realtime inbox: give the WS manager the running event loop
     ws_manager.set_loop(asyncio.get_running_loop())
@@ -69,6 +110,12 @@ app.include_router(automations.router, prefix=f"{settings.API_V1_STR}/automation
 app.include_router(copilot.router, prefix=f"{settings.API_V1_STR}/copilot", tags=["Staff Copilot"])
 app.include_router(platform.router, prefix=f"{settings.API_V1_STR}/platform", tags=["Platform Super-Admin"])
 app.include_router(org.router, prefix=f"{settings.API_V1_STR}/org", tags=["Organization / Chain"])
+app.include_router(booking_requests.router, prefix=f"{settings.API_V1_STR}/booking-requests", tags=["Booking Requests"])
+
+# Public landing pages are server-rendered HTML for crawlers, so they live at
+# /book/* rather than under the JSON API prefix. nginx/vite proxy this path to
+# the backend; everything else still goes to the SPA.
+app.include_router(landing.router, prefix="/book", tags=["Public Landing"])
 
 @app.get("/")
 def read_root():
@@ -78,6 +125,17 @@ def read_root():
         "docs_url": "/docs"
     }
 
+@app.get("/health")
+def health_check():
+    """Liveness/readiness probe: confirms the process can actually reach the DB."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"database unavailable: {e}")
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
+    reload = not settings.is_production
+    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=reload)

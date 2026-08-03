@@ -41,7 +41,7 @@ SaaS multi-tenant vận hành doanh thu tự động: AI trực chat 24/7 đa k�
 python -m venv .venv
 .venv/Scripts/pip install -r backend/requirements.txt
 .venv/Scripts/python -m uvicorn backend.app.main:app --port 8000
-# Swagger: http://localhost:8000/docs
+# Swagger: http://localhost:8000/docs   Health: http://localhost:8000/health
 
 # Frontend
 cd frontend && npm install && npm run dev
@@ -50,7 +50,17 @@ cd frontend && npm install && npm run dev
 # Widget demo: mở widget/index.html (cấu hình window.CareDeskConfig trong file)
 ```
 
-Tài khoản seed: `admin@caredesk.ai/admin123`, `owner@caredesk.ai/owner123`, `receptionist@caredesk.ai/receptionist123`.
+Backend tự chạy `alembic upgrade head` rồi seed khi khởi động — không cần lệnh migration thủ công ở dev.
+
+Tài khoản seed (chỉ tạo khi `SEED_DEMO_DATA` bật, mặc định bật ở dev):
+
+| Tài khoản | Mật khẩu | Vai trò | Vào được |
+|---|---|---|---|
+| `owner@caredesk.ai` | `owner123` | owner | Dashboard phòng khám |
+| `receptionist@caredesk.ai` | `receptionist123` | receptionist | Inbox, lịch hẹn |
+| `admin@caredesk.ai` | `admin123` | admin | Toàn bộ phòng khám |
+| `chain@caredesk.ai` | `chain123` | org_owner | `/org` — console chuỗi |
+| `platform@caredesk.ai` | `platform123` | platform admin | `/platform` — console nhà phát hành |
 
 ## Test
 
@@ -61,21 +71,69 @@ Tài khoản seed: `admin@caredesk.ai/admin123`, `owner@caredesk.ai/owner123`, `
 
 ## Production
 
-1. Copy `backend/.env.example` → `.env`, đặt `SECRET_KEY`, `DATABASE_URL` (PostgreSQL), SMTP/SMS.
-2. Migration: `cd backend && alembic upgrade head`.
-3. Frontend: đặt `VITE_API_URL` trỏ về backend rồi `npm run build`.
+### Cách nhanh nhất: Docker Compose
+
+```bash
+cp .env.example .env       # điền POSTGRES_PASSWORD, SECRET_KEY, BACKEND_CORS_ORIGINS
+docker compose up -d --build
+docker compose logs backend | grep -i "generated a random password"   # lấy mật khẩu admin lần đầu
+```
+
+Compose dựng PostgreSQL + backend (`:8000`) + frontend nginx (`:80`), chạy sẵn `ENVIRONMENT=production`.
+
+### Thủ công
+
+1. Copy `backend/.env.example` → `.env`, đặt **`ENVIRONMENT=production`**, `SECRET_KEY`, `DATABASE_URL` (PostgreSQL), `BACKEND_CORS_ORIGINS`, SMTP/SMS.
+2. Chạy backend — migration `alembic upgrade head` tự chạy lúc khởi động.
+3. Frontend: đặt `VITE_API_URL` trỏ về backend rồi `npm run build`, serve thư mục `dist/`.
 4. Cấu hình kênh Zalo/FB per-clinic trong Dashboard → Cài đặt → Kết nối kênh.
+
+### Chốt chặn an toàn khi `ENVIRONMENT=production`
+
+App **từ chối khởi động** nếu `SECRET_KEY` còn giá trị mặc định, hoặc `BACKEND_CORS_ORIGINS` để `*`.
+`SEED_DEMO_DATA` mặc định **tắt** — không tạo tài khoản/dữ liệu demo trên DB thật. Tài khoản
+platform admin vẫn được tạo; nếu không đặt `PLATFORM_ADMIN_PASSWORD`, hệ thống sinh mật khẩu
+ngẫu nhiên và **log ra một lần duy nhất** lúc khởi động đầu tiên.
+
+Scheduler nhắc lịch và rate limiter đang lưu state **in-memory, single-process**: chạy nhiều
+uvicorn worker sẽ nhân bản reminder và rate limit theo số worker (app sẽ log cảnh báo).
+Muốn scale ngang cần chuyển rate limit sang Redis và chỉ bật scheduler ở 1 process.
+
+Kết nối DB cấu hình qua `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT` (mặc định 20/20/30).
 
 ## Cấu trúc
 
 ```
 backend/app/
-  api/endpoints/   auth, clinic, appointment, chat, webhooks, reports, public, ws
-  services/        ai_engine, booking_flow, evaluator, reminder, channel_gateway,
-                   rate_limit, audit, ws_manager
-  models|schemas|core
-frontend/src/pages/  Dashboard, Clinic, Services, Doctors, Appointments (list+calendar),
-                     Inbox, Patients (CRM), Reports, Settings, Login, Register
-widget/              chat widget nhúng website
-tests/               pytest + golden dataset
+  main.py          khởi động: safety checks -> migration -> seed -> scheduler; / , /health
+  api/endpoints/   auth, clinic, appointment, chat, webhooks, reports, public, ws,
+                   packages, automations, copilot, platform, org, booking_requests
+  services/        ai_engine, booking_flow, events (automation engine), reminder,
+                   channel_gateway, payment_gateway, evaluator, public_chat_session,
+                   i18n, rate_limit, audit, ws_manager, tenant_stats, capi
+  core/            config, database, migrate, seed, security, logging_config, slug
+  models|schemas   SQLAlchemy models / Pydantic schemas
+  alembic/         migration (tự chạy khi khởi động)
+frontend/src/
+  pages/           Dashboard, Clinic, Services, Doctors, Appointments, BookingRequests,
+                   Inbox, Patients, Packages, Automation, Reports, Settings,
+                   Platform, Org, Chain, ClinicLanding, ClinicChat, Login, Register
+  api.js           API_BASE / WS_BASE + auth headers      i18n.jsx  đa ngôn ngữ vi/ja/en
+widget/            chat widget nhúng website
+tests/             pytest + golden dataset
+docker-compose.yml + backend/Dockerfile + frontend/Dockerfile
 ```
+
+### Bản đồ URL
+
+| URL | Cần đăng nhập | Dùng cho |
+|---|---|---|
+| `/` | ✅ | Dashboard phòng khám (sidebar: lịch hẹn, inbox, CRM, gói, báo cáo…) |
+| `/org`, `/org/:slug` | ✅ | Console chuỗi — roll-up nhiều phòng khám |
+| `/platform` | ✅ | Console nhà phát hành — quản lý tenant, gói cước |
+| `/book/:org/:clinic` | ❌ | **Trang phòng khám** — link chuẩn gửi cho khách (tên, địa chỉ, SĐT + nút vào chat) |
+| `/book/:org/:clinic/chat` | ❌ | Chat AI đặt lịch — khách vào từ nút trên trang phòng khám |
+| `/book/:org` | ❌ | Trang chuỗi, khách chọn chi nhánh |
+
+Link "Chép" ở console Nhà phát hành / Chuỗi trỏ về **trang phòng khám**, không nhảy thẳng vào chat —
+khách thấy thông tin phòng khám trước rồi mới quyết định trò chuyện.

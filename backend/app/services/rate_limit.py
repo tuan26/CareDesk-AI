@@ -37,3 +37,9 @@ class RateLimiter:
 chat_rate_limiter = RateLimiter(scope="chat")
 public_rate_limiter = RateLimiter(times=10, scope="public")
 register_rate_limiter = RateLimiter(times=5, seconds=300, scope="register")
+
+# Landing pages are ordinary web pages: ad traffic, crawlers, link-preview bots
+# and visitors behind shared/NAT IPs all hit them normally. The 10/min used for
+# one-shot confirm/cancel links would 429 real patients browsing a few branches,
+# so these get a much wider window (responses are also cached for 5 minutes).
+landing_rate_limiter = RateLimiter(times=120, scope="landing")
