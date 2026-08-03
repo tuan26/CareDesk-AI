@@ -10,7 +10,12 @@ config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: this runs inside the live app process
+    # (backend.app.core.migrate.run_migrations), not just the standalone
+    # `alembic` CLI. The default (True) tears down every logger the app
+    # already configured. main.py re-applies its own logging config right
+    # after migrations run, as a second safety net.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

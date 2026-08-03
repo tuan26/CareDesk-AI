@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import get_password_hash
-from backend.app.core.slug import slug_with_token
+from backend.app.core.slug import assign_slug, change_slug
 from backend.app.api.deps import get_platform_admin
 from backend.app.models.models import User, Clinic, Organization, Plan
 from backend.app.schemas.schemas import (
@@ -52,6 +52,7 @@ def _seed_starter_catalogue(db: Session, clinic: Clinic) -> None:
                     phone=clinic.phone, working_hours="08:00 - 20:00")
     db.add(branch)
     db.flush()
+    assign_slug(db, branch)
     svc = Service(clinic_id=clinic.id, name="Khám & tư vấn da liễu", description="Khám và tư vấn với bác sĩ.",
                   price=150000, duration_minutes=30)
     db.add(svc)
@@ -102,20 +103,20 @@ def provision_clinic(
     else:
         # Every clinic lives under an organization. A standalone partner gets a
         # personal org (its own brand) so the /org/<org>/clinics/<clinic> URL is uniform.
-        personal = Organization(name=body.clinic_name, is_active=True,
-                                slug=slug_with_token(db, Organization, body.clinic_name))
+        personal = Organization(name=body.clinic_name, is_active=True)
         db.add(personal)
         db.flush()
+        assign_slug(db, personal)
         org_id = personal.id
 
     clinic = Clinic(
         name=body.clinic_name, phone=body.phone, address=body.address,
         organization_id=org_id, is_active=True,
-        slug=slug_with_token(db, Clinic, body.clinic_name),
     )
     _apply_plan(clinic, plan, fee_override=body.monthly_fee)
     db.add(clinic)
     db.flush()
+    assign_slug(db, clinic)
 
     owner = User(
         clinic_id=clinic.id, email=body.owner_email,
@@ -163,7 +164,13 @@ def update_clinic(
     if body.address is not None:
         clinic.address = body.address
     if body.slug is not None:
-        clinic.slug = slug_with_token(db, Clinic, body.slug, exclude_id=clinic.id)
+        # No-op when unchanged: a public URL must never churn just because the
+        # edit form resubmitted the same slug. The old slug stays registered for
+        # a 301 when it does change.
+        try:
+            change_slug(db, clinic, body.slug)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     # Overrides (allowed even without a plan change)
     if body.ai_quota_monthly is not None:
@@ -254,8 +261,10 @@ def create_organization(
     if db.query(User).filter(User.email == body.owner_email).first():
         raise HTTPException(400, "Email chủ chuỗi này đã tồn tại.")
 
-    org = Organization(name=body.name, is_active=True, slug=slug_with_token(db, Organization, body.name))
+    org = Organization(name=body.name, is_active=True)
     db.add(org)
+    db.flush()
+    assign_slug(db, org)
     db.flush()
 
     # Chain owner: an account bound to the organization, not to a single clinic.

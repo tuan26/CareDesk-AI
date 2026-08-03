@@ -22,6 +22,33 @@ class User(Base):
     audit_logs = relationship("AuditLog", back_populates="user")
 
 
+class SlugRegistry(Base):
+    """Global registry of every public URL slug — the single source of truth.
+
+    Why a registry instead of a UNIQUE column per table: organizations, clinics
+    and branches all share one public namespace (/book/<slug>). Per-table
+    uniqueness lets a clinic and a branch claim the same slug, which would route
+    a patient to the wrong clinic — a safety bug, not a cosmetic one. Here the
+    primary key enforces global uniqueness at the database level, resolution is
+    one indexed lookup instead of N table probes, and adding a new entity type
+    later needs no change to the slug logic.
+
+    Rows are never deleted on rename. Setting is_active=False keeps the old slug
+    resolvable so printed QR codes and indexed URLs can be 301-redirected to the
+    entity's current slug.
+
+    `entity_type='reserved'` rows (entity_id NULL) block system paths like
+    'admin' or 'api' from ever being handed to a tenant.
+    """
+    __tablename__ = "slug_registry"
+
+    slug = Column(String, primary_key=True)
+    entity_type = Column(String, nullable=False, index=True)  # organization | clinic | branch | reserved
+    entity_id = Column(Integer, nullable=True, index=True)    # NULL for reserved words
+    is_active = Column(Boolean, default=True, nullable=False)  # False = superseded, 301 only
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Organization(Base):
     """A chain / group that owns multiple clinics. Enables cross-clinic roll-up."""
     __tablename__ = "organizations"
@@ -29,6 +56,7 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, index=True, nullable=True)  # public link /g/<slug>
+    landing_enabled = Column(Boolean, default=True, nullable=False)  # chain landing page at /book/<slug>
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -68,6 +96,9 @@ class Clinic(Base):
     deposit_amount = Column(Float, default=0.0)  # 0 = deposits disabled
     google_review_url = Column(String, nullable=True)  # link sent to happy patients
     digest_enabled = Column(Boolean, default=True)  # daily owner digest
+    default_locale = Column(String, default="vi", nullable=False)  # vi | ja | en
+    public_chat_v1_enabled = Column(Boolean, default=False, nullable=False)  # opt-in session-bound public chat
+    landing_enabled = Column(Boolean, default=True, nullable=False)  # public landing page at /book/<slug>
     is_active = Column(Boolean, default=True)  # suspended clinics: AI + logins blocked
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -78,14 +109,27 @@ class Clinic(Base):
 
 
 class Branch(Base):
+    """A physical location of a Clinic. The public-facing "cơ sở" patients pick.
+
+    Billing/tenancy stay at the Clinic level: one clinic pays one subscription
+    no matter how many branches it runs, and services/patients/quota are shared
+    across them.
+    """
     __tablename__ = "branches"
 
     id = Column(Integer, primary_key=True, index=True)
     clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
+    # Public link /book/<brand>/<slug>. Always generated, even when the branch
+    # landing is off, so enabling it later never changes the URL. Never
+    # re-derived from `name` - renaming a branch must not break printed QR
+    # codes; changing it is an explicit action (see core/slug.py).
+    slug = Column(String, unique=True, index=True, nullable=True)
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     working_hours = Column(String, nullable=True)  # e.g., "08:00 - 20:00"
+    landing_enabled = Column(Boolean, default=False, nullable=False)  # opt-in per-branch landing page
+    is_active = Column(Boolean, default=True, nullable=False)  # closed/renovating: hide without suspending the clinic
 
     clinic = relationship("Clinic", back_populates="branches")
     schedules = relationship("WorkingSchedule", back_populates="branch", cascade="all, delete-orphan")
@@ -102,7 +146,8 @@ class Service(Base):
     price = Column(Float, nullable=False, default=0.0)
     duration_minutes = Column(Integer, nullable=False, default=30)
     preparation_instructions = Column(Text, nullable=True)
-    faq_data = Column(JSON, nullable=True)  # List of Q&A dictionaries for RAG fallback
+    faq_data = Column(JSON, nullable=True)  # Legacy list of Q&A dictionaries for RAG fallback
+    localized_content = Column(JSON, nullable=True)  # {locale: {name, description, preparation_instructions, faq}}
 
     clinic = relationship("Clinic", back_populates="services")
     appointments = relationship("Appointment", back_populates="service")
@@ -166,12 +211,31 @@ class Conversation(Base):
     patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="CASCADE"), nullable=False)
     channel = Column(String, default="web")  # web | zalo | facebook
     status = Column(String, default="bot_active")  # bot_active | handoff_requested | agent_active
+    locale = Column(String, nullable=True)  # Explicit patient locale; NULL uses Clinic.default_locale
     booking_state = Column(JSON, nullable=True)  # AI booking flow state machine
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     patient = relationship("PatientLead", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    public_sessions = relationship("PublicChatSession", back_populates="conversation", cascade="all, delete-orphan")
+
+
+class PublicChatSession(Base):
+    """Revocable, rotating bearer credential for an unauthenticated web conversation."""
+    __tablename__ = "public_chat_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    previous_token_hash = Column(String(64), nullable=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    previous_expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    conversation = relationship("Conversation", back_populates="public_sessions")
 
 
 class Message(Base):
@@ -208,6 +272,29 @@ class Appointment(Base):
     service = relationship("Service", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
     branch = relationship("Branch", back_populates="appointments")
+
+
+class BookingRequest(Base):
+    """Administrative request only; staff/calendar integration creates an Appointment later."""
+    __tablename__ = "booking_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="SET NULL"), nullable=True, index=True)
+    service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True, index=True)
+    locale = Column(String, nullable=False, default="vi")
+    service_or_need = Column(Text, nullable=False)
+    preferred_time = Column(String, nullable=True)
+    full_name = Column(String, nullable=False)
+    contact_method = Column(String, nullable=False, default="phone")
+    contact_value = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="requested", index=True)  # requested | contacted | converted | cancelled
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    service = relationship("Service")
+    patient = relationship("PatientLead")
 
 
 class AISafetyRule(Base):
