@@ -2,17 +2,31 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { API_BASE } from '../api';
 
+const COPY = {
+  vi: { intro: 'Để lại thông tin để bắt đầu trò chuyện với trợ lý ảo:', name: 'Họ và tên', phone: 'Số điện thoại', consent: 'Tôi đồng ý cho phòng khám lưu thông tin để tư vấn.', start: 'Bắt đầu trò chuyện', welcome: 'Xin chào {name}! Mình là trợ lý ảo của {clinic}. Bạn cần hỗ trợ gì ạ?', connection: 'Xin lỗi, kết nối gặp sự cố. Bạn thử lại giúp nhé.', replying: 'Đang trả lời...', input: 'Nhập tin nhắn...', send: 'Gửi' },
+  en: { intro: 'Leave your details to start a conversation with our virtual assistant:', name: 'Full name', phone: 'Phone number', consent: 'I consent to the clinic storing my details for consultation.', start: 'Start chat', welcome: 'Hello {name}! I am the virtual assistant for {clinic}. How can I help?', connection: 'Sorry, the connection failed. Please try again.', replying: 'Replying...', input: 'Type a message...', send: 'Send' },
+  ja: { intro: 'バーチャルアシスタントとの会話を始めるために、情報を入力してください。', name: 'お名前', phone: '電話番号', consent: '相談のため、クリニックが私の情報を保存することに同意します。', start: 'チャットを開始', welcome: '{name}様、こんにちは。{clinic}のバーチャルアシスタントです。どのようにお手伝いできますか？', connection: '接続に失敗しました。もう一度お試しください。', replying: '返信中...', input: 'メッセージを入力...', send: '送信' },
+};
+
 /**
  * Public per-clinic chat page reached via a unique link /c/<slug>.
  * Resolves the slug to a clinic, shows its branding, and runs the AI chat
  * scoped to that clinic (same endpoints the embeddable widget uses).
  */
 export default function ClinicChatPage() {
-  const { slug, orgSlug, clinicSlug } = useParams();
-  const resolveUrl = orgSlug && clinicSlug
-    ? `${API_BASE}/public/org/${orgSlug}/clinics/${clinicSlug}`
-    : `${API_BASE}/public/clinic-by-slug/${slug}`;
+  const { slug, brandSlug, branchSlug, orgSlug, clinicSlug } = useParams();
+  // /chat/<brand>[/<branch>] is the current shape. The older /c/<slug> and
+  // /book/<org>/<clinic>/chat links are still routed here so previously shared
+  // links and printed QR codes keep working.
+  const resolveUrl = brandSlug
+    ? `${API_BASE}/public/resolve/${brandSlug}${branchSlug ? `/${branchSlug}` : ''}`
+    : orgSlug && clinicSlug
+      ? `${API_BASE}/public/org/${orgSlug}/clinics/${clinicSlug}`
+      : `${API_BASE}/public/clinic-by-slug/${slug}`;
   const [clinic, setClinic] = useState(null);
+  const [locale, setLocale] = useState('vi');
+  const [sessionToken, setSessionToken] = useState(null);
+  const t = (key, values = {}) => (COPY[locale]?.[key] || COPY.en[key] || key).replace(/\{(\w+)\}/g, (_, name) => values[name] || '');
   const [notFound, setNotFound] = useState(false);
   const [lead, setLead] = useState({ full_name: '', phone: '', consent: false });
   const [convId, setConvId] = useState(null);
@@ -27,7 +41,9 @@ export default function ClinicChatPage() {
       try {
         const res = await fetch(resolveUrl);
         if (!res.ok) { setNotFound(true); return; }
-        setClinic(await res.json());
+        const data = await res.json();
+        setClinic(data);
+        setLocale(COPY[data.default_locale] ? data.default_locale : 'vi');
       } catch { setNotFound(true); }
     })();
   }, [resolveUrl]);
@@ -37,19 +53,20 @@ export default function ClinicChatPage() {
   const start = async (e) => {
     e.preventDefault();
     setErr('');
-    if (!lead.consent) { setErr('Vui lòng đồng ý chính sách bảo mật để bắt đầu.'); return; }
+    if (!lead.consent) { setErr(locale === 'vi' ? 'Vui lòng đồng ý chính sách bảo mật để bắt đầu.' : locale === 'ja' ? '続行するには同意が必要です。' : 'Please consent to continue.'); return; }
     try {
       const res = await fetch(`${API_BASE}/chat/conversations`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(sessionToken ? { 'X-CareDesk-Session': sessionToken } : {}) },
         body: JSON.stringify({
           full_name: lead.full_name, phone: lead.phone, source: 'web',
-          consent_given: true, clinic_id: clinic.clinic_id,
+          consent_given: true, clinic_id: clinic.clinic_id, locale,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Không bắt đầu được hội thoại');
+      if (!res.ok) throw new Error(data.detail || 'Unable to start the conversation');
       setConvId(data.id);
-      setMessages([{ sender: 'bot', content: `Xin chào ${lead.full_name || 'bạn'}! Mình là trợ lý ảo của ${clinic.name}. Bạn cần hỗ trợ gì ạ?` }]);
+      setSessionToken(data.public_session_token || null);
+      setMessages([{ sender: 'bot', content: t('welcome', { name: lead.full_name || t('name'), clinic: clinic.name }) }]);
     } catch (e2) { setErr(e2.message); }
   };
 
@@ -62,13 +79,14 @@ export default function ClinicChatPage() {
     setSending(true);
     try {
       const res = await fetch(`${API_BASE}/chat/conversations/${convId}/messages`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(sessionToken ? { 'X-CareDesk-Session': sessionToken } : {}) },
         body: JSON.stringify({ content: text }),
       });
       const data = await res.json();
+      setSessionToken(res.headers.get('X-CareDesk-Session') || sessionToken);
       if (data?.content) setMessages(prev => [...prev, { sender: 'bot', content: data.content }]);
     } catch {
-      setMessages(prev => [...prev, { sender: 'bot', content: 'Xin lỗi, kết nối gặp sự cố. Bạn thử lại giúp nhé.' }]);
+      setMessages(prev => [...prev, { sender: 'bot', content: t('connection') }]);
     } finally { setSending(false); }
   };
 
@@ -92,24 +110,25 @@ export default function ClinicChatPage() {
             <div style={{ fontWeight: 700, fontSize: 16 }}>{clinic.name}</div>
             {clinic.address && <div style={{ fontSize: 12, opacity: 0.85 }}>{clinic.address}</div>}
           </div>
+          <select aria-label="Language" value={locale} onChange={(e) => setLocale(e.target.value)} style={{ marginLeft: 'auto' }}><option value="vi">VI</option><option value="en">EN</option><option value="ja">JA</option></select>
         </div>
 
         {!convId ? (
           <form onSubmit={start} style={sx.consent}>
             <p style={{ color: '#475569', fontSize: 14, margin: '4px 0 8px' }}>
-              Để lại thông tin để bắt đầu trò chuyện với trợ lý ảo:
+              {t('intro')}
             </p>
-            <input style={sx.input} placeholder="Họ và tên" value={lead.full_name}
+            <input style={sx.input} placeholder={t('name')} value={lead.full_name}
               onChange={e => setLead({ ...lead, full_name: e.target.value })} required />
-            <input style={sx.input} placeholder="Số điện thoại" value={lead.phone}
+            <input style={sx.input} placeholder={t('phone')} value={lead.phone}
               onChange={e => setLead({ ...lead, phone: e.target.value })} required />
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#475569' }}>
               <input type="checkbox" checked={lead.consent}
                 onChange={e => setLead({ ...lead, consent: e.target.checked })} />
-              Tôi đồng ý cho phòng khám lưu thông tin để tư vấn.
+              {t('consent')}
             </label>
             {err && <div style={sx.err}>{err}</div>}
-            <button type="submit" style={sx.btn}>Bắt đầu trò chuyện</button>
+            <button type="submit" style={sx.btn}>{t('start')}</button>
           </form>
         ) : (
           <>
@@ -123,14 +142,14 @@ export default function ClinicChatPage() {
                   border: m.sender === 'patient' ? 'none' : '1px solid #e2e8f0',
                 }}>{m.content}</div>
               ))}
-              {sending && <div style={{ fontSize: 12, color: '#94a3b8' }}>Đang trả lời...</div>}
+              {sending && <div style={{ fontSize: 12, color: '#94a3b8' }}>{t('replying')}</div>}
               <div ref={endRef} />
             </div>
             <form onSubmit={send} style={sx.inputBar}>
-              <input style={{ ...sx.input, margin: 0, flex: 1 }} placeholder="Nhập tin nhắn..." value={input}
+              <input style={{ ...sx.input, margin: 0, flex: 1 }} placeholder={t('input')} value={input}
                 onChange={e => setInput(e.target.value)} />
               <button type="submit" style={{ ...sx.btn, width: 'auto', margin: 0, padding: '10px 18px' }}
-                disabled={sending || !input.trim()}>Gửi</button>
+                disabled={sending || !input.trim()}>{t('send')}</button>
             </form>
           </>
         )}

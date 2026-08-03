@@ -112,6 +112,25 @@ export default function ClinicPage() {
     }
   };
 
+  const toggleBranchLanding = async (branch, enabled) => {
+    try {
+      const response = await fetch(`${API_BASE}/clinic/branches/${branch.id}`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ landing_enabled: enabled })
+      });
+      if (response.ok) {
+        fetchData();
+      } else {
+        const data = await response.json().catch(() => null);
+        alert(data?.detail || 'Không thể cập nhật chi nhánh.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi kết nối máy chủ.');
+    }
+  };
+
   const handleDeleteBranch = async (branch) => {
     if (!window.confirm(`Bạn có chắc muốn xóa chi nhánh "${branch.name}"?`)) return;
     try {
@@ -232,6 +251,7 @@ export default function ClinicPage() {
                   <th>Chi nhánh</th>
                   <th>Liên hệ</th>
                   <th>Giờ làm việc</th>
+                  <th>Trang riêng</th>
                   {isManager && <th style={{ width: '80px' }}></th>}
                 </tr>
               </thead>
@@ -241,9 +261,26 @@ export default function ClinicPage() {
                     <td>
                       <div style={{ fontWeight: 600 }}>{branch.name}</div>
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>{branch.address}</div>
+                      {branch.slug && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          <code>/{branch.slug}</code>
+                        </div>
+                      )}
                     </td>
                     <td>{branch.phone || '—'}</td>
                     <td>{branch.working_hours || '—'}</td>
+                    <td>
+                      {isManager ? (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}
+                          title="Bật để cơ sở này có trang giới thiệu riêng (dùng khi chạy quảng cáo/SEO theo địa điểm).">
+                          <input type="checkbox" checked={!!branch.landing_enabled}
+                            onChange={(e) => toggleBranchLanding(branch, e.target.checked)} />
+                          {branch.landing_enabled ? 'Bật' : 'Tắt'}
+                        </label>
+                      ) : (
+                        <span style={{ fontSize: 12 }}>{branch.landing_enabled ? 'Bật' : 'Tắt'}</span>
+                      )}
+                    </td>
                     {isManager && (
                       <td>
                         <button className="btn btn-danger btn-sm" onClick={() => handleDeleteBranch(branch)}>Xóa</button>

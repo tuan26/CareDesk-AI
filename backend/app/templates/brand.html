@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block hero_meta %}
+  {% if brand.address %}<p class="sub">📍 {{ brand.address }}</p>{% endif %}
+  {% if brand.phone %}<p class="sub">☎ <a href="tel:{{ brand.phone }}">{{ brand.phone }}</a></p>{% endif %}
+  {% if brand.branches %}<p class="sub">{{ brand.branches | length }} cơ sở</p>{% endif %}
+{% endblock %}
+
+{% block hero_cta %}
+  <a class="btn" href="{{ chat_href }}">💬 Đặt lịch với trợ lý ảo</a>
+  {% if brand.phone %}<a class="btn ghost" href="tel:{{ brand.phone }}">Gọi hotline</a>{% endif %}
+{% endblock %}
+
+{% block content %}
+
+{% if brand.branches %}
+<section>
+  <h2>Các cơ sở</h2>
+  <div class="grid">
+    {% for b in brand.branches %}
+    <div class="card">
+      <h3>📍 {{ b.name }}</h3>
+      <p class="meta">{{ b.address }}</p>
+      {% if b.working_hours %}<p class="meta">🕐 {{ b.working_hours }}</p>{% endif %}
+      {% if b.phone %}<p class="meta">☎ <a href="tel:{{ b.phone }}">{{ b.phone }}</a></p>{% endif %}
+      <div class="actions">
+        <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">Đặt lịch cơ sở này</a>
+        {% if b.landing_enabled %}
+          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}">Xem chi tiết</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if brand.services %}
+<section>
+  <h2>Dịch vụ &amp; bảng giá</h2>
+  <div class="grid">
+    {% for s in brand.services %}
+    <div class="card">
+      <div class="row">
+        <div style="flex:1;min-width:220px">
+          <h3>{{ s.name }}</h3>
+          {% if s.description %}<p class="meta">{{ s.description }}</p>{% endif %}
+          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} phút</p>{% endif %}
+        </div>
+        <div class="price">{{ "{:,.0f}".format(s.price) }}đ</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if brand.doctors %}
+<section>
+  <h2>Đội ngũ bác sĩ</h2>
+  <div class="grid">
+    {% for d in brand.doctors %}
+    <div class="card">
+      <h3>{{ d.name }}</h3>
+      {% if d.specialty %}<p class="meta">{{ d.specialty }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Đặt lịch khám</h2>
+  <p class="meta">Trò chuyện với trợ lý ảo để được tư vấn dịch vụ và giữ chỗ khung giờ phù hợp.</p>
+  <div class="actions"><a class="btn" href="{{ chat_href }}">💬 Bắt đầu đặt lịch</a></div>
+</section>
+
+{% endblock %}

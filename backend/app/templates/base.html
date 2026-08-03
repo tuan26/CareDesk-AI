@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+{# Server-rendered so Facebook/Zalo crawlers - which never run JS - get real
+   metadata. This is the whole reason /book/* is not part of the SPA. #}
+<title>{{ page_title }}</title>
+<meta name="description" content="{{ page_description }}">
+<link rel="canonical" href="{{ base_url }}{{ canonical_path }}">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ brand.name }}">
+<meta property="og:title" content="{{ page_title }}">
+<meta property="og:description" content="{{ page_description }}">
+<meta property="og:url" content="{{ base_url }}{{ canonical_path }}">
+{% if brand.logo_url %}<meta property="og:image" content="{{ brand.logo_url }}">{% endif %}
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">{{ json_ld | safe }}</script>
+
+<style>
+:root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#0d9488;--brand-dk:#0f766e;--bg:#f8fafc}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
+a{color:inherit}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px}
+header.hero{background:linear-gradient(135deg,#0f172a,#115e59);color:#fff;padding:48px 0 40px}
+header.hero .wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.logo{width:84px;height:84px;border-radius:18px;object-fit:cover;background:#fff;flex:none}
+.logo-fb{width:84px;height:84px;border-radius:18px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:700;flex:none}
+h1{margin:0 0 6px;font-size:26px}
+.sub{color:rgba(255,255,255,.78);font-size:14px;margin:2px 0}
+.cta-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;width:100%}
+.btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px;text-decoration:none;background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff}
+.btn.ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28)}
+section{padding:34px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+h2{font-size:19px;margin:0 0 16px}
+.grid{display:grid;gap:12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px}
+.card h3{margin:0 0 4px;font-size:16px}
+.meta{color:var(--muted);font-size:13.5px;margin:2px 0}
+.price{font-weight:700;color:var(--brand-dk);white-space:nowrap}
+.row{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.mini{display:inline-block;padding:8px 14px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;background:var(--brand);color:#fff}
+.mini.alt{background:#fff;color:var(--brand-dk);border:1px solid var(--brand)}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+footer{padding:26px 0 44px;color:var(--muted);font-size:12.5px;text-align:center}
+@media(max-width:560px){header.hero{padding:32px 0 28px}h1{font-size:22px}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    {% if brand.logo_url %}
+      <img class="logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}">
+    {% else %}
+      <div class="logo-fb">{{ brand.name[:1] }}</div>
+    {% endif %}
+    <div style="flex:1;min-width:240px">
+      <h1>{{ heading }}</h1>
+      {% block hero_meta %}{% endblock %}
+    </div>
+    <div class="cta-row">{% block hero_cta %}{% endblock %}</div>
+  </div>
+</header>
+
+<main class="wrap">{% block content %}{% endblock %}</main>
+
+<footer>Được vận hành bởi CareDesk AI</footer>
+</body>
+</html>

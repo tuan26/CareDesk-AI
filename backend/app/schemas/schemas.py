@@ -50,6 +50,8 @@ class ClinicBase(BaseModel):
     deposit_amount: Optional[float] = None  # 0 = deposits off
     google_review_url: Optional[str] = None
     digest_enabled: Optional[bool] = None
+    default_locale: Optional[str] = "vi"
+    public_chat_v1_enabled: Optional[bool] = False
 
 class ClinicCreate(ClinicBase):
     pass
@@ -75,9 +77,24 @@ class BranchCreate(BranchBase):
 class BranchOut(BranchBase):
     id: int
     clinic_id: int
+    slug: Optional[str] = None
+    landing_enabled: bool = False
+    is_active: bool = True
 
     class Config:
         from_attributes = True
+
+
+class BranchUpdate(BaseModel):
+    """Partial update. `slug` moves the public URL and is deliberately separate
+    from `name` — renaming a branch must never break printed QR codes."""
+    name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    working_hours: Optional[str] = None
+    landing_enabled: Optional[bool] = None
+    is_active: Optional[bool] = None
+    slug: Optional[str] = None
 
 
 # Service
@@ -88,6 +105,7 @@ class ServiceBase(BaseModel):
     duration_minutes: int
     preparation_instructions: Optional[str] = None
     faq_data: Optional[List[Dict[str, str]]] = None
+    localized_content: Optional[Dict[str, Dict[str, Any]]] = None
 
 class ServiceCreate(ServiceBase):
     clinic_id: int
@@ -145,6 +163,7 @@ class PatientLeadBase(BaseModel):
 
 class PatientLeadCreate(PatientLeadBase):
     clinic_id: Optional[int] = None
+    locale: Optional[str] = None
     referral_code_used: Optional[str] = None  # friend's code entered at signup
 
 class PatientLeadOut(PatientLeadBase):
@@ -190,6 +209,8 @@ class ConversationOut(BaseModel):
     patient_id: int
     channel: str
     status: str
+    locale: Optional[str] = None
+    public_session_token: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     patient: Optional[PatientLeadOut] = None
@@ -386,6 +407,8 @@ class PublicClinicOut(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     is_active: bool = True
+    default_locale: str = "vi"
+    public_chat_v1_enabled: bool = False
 
 
 # ===== Organization (chain) =====
@@ -408,3 +431,28 @@ class OrganizationOut(BaseModel):
 class AssignClinicToOrg(BaseModel):
     clinic_id: int
     organization_id: Optional[int] = None  # None detaches the clinic from its chain
+
+
+# ===== V1 booking request inbox =====
+class BookingRequestStatusUpdate(BaseModel):
+    status: str  # requested | contacted | converted | cancelled
+
+
+class BookingRequestOut(BaseModel):
+    id: int
+    clinic_id: int
+    conversation_id: Optional[int] = None
+    patient_id: Optional[int] = None
+    service_id: Optional[int] = None
+    locale: str
+    service_or_need: str
+    preferred_time: Optional[str] = None
+    full_name: str
+    contact_method: str
+    contact_value: str
+    note: Optional[str] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

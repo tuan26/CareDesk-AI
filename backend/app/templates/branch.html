@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block hero_meta %}
+  <p class="sub">{{ brand.name }}</p>
+  <p class="sub">📍 {{ branch.address }}</p>
+  {% if branch.working_hours %}<p class="sub">🕐 {{ branch.working_hours }}</p>{% endif %}
+  {% if branch.phone %}<p class="sub">☎ <a href="tel:{{ branch.phone }}">{{ branch.phone }}</a></p>{% endif %}
+{% endblock %}
+
+{% block hero_cta %}
+  <a class="btn" href="{{ chat_href }}">💬 Đặt lịch tại cơ sở này</a>
+  {% if branch.phone %}<a class="btn ghost" href="tel:{{ branch.phone }}">Gọi cơ sở</a>{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<section>
+  <h2>Thông tin cơ sở</h2>
+  <div class="card">
+    <h3>📍 {{ branch.name }}</h3>
+    <p class="meta">{{ branch.address }}</p>
+    {% if branch.working_hours %}<p class="meta">🕐 Giờ làm việc: {{ branch.working_hours }}</p>{% endif %}
+    {% if branch.phone %}<p class="meta">☎ <a href="tel:{{ branch.phone }}">{{ branch.phone }}</a></p>{% endif %}
+    <div class="actions">
+      <a class="mini" href="{{ chat_href }}">Đặt lịch</a>
+      <a class="mini alt" href="https://www.google.com/maps/search/?api=1&amp;query={{ branch.address | urlencode }}"
+         target="_blank" rel="noopener">Chỉ đường</a>
+    </div>
+  </div>
+</section>
+
+{% if brand.services %}
+<section>
+  <h2>Dịch vụ &amp; bảng giá</h2>
+  <div class="grid">
+    {% for s in brand.services %}
+    <div class="card">
+      <div class="row">
+        <div style="flex:1;min-width:220px">
+          <h3>{{ s.name }}</h3>
+          {% if s.description %}<p class="meta">{{ s.description }}</p>{% endif %}
+          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} phút</p>{% endif %}
+        </div>
+        <div class="price">{{ "{:,.0f}".format(s.price) }}đ</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if brand.branches | length > 1 %}
+<section>
+  <h2>Cơ sở khác</h2>
+  <div class="grid">
+    {% for b in brand.branches if b.id != branch.id %}
+    <div class="card">
+      <h3>📍 {{ b.name }}</h3>
+      <p class="meta">{{ b.address }}</p>
+      <div class="actions">
+        <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">Đặt lịch</a>
+        {% if b.landing_enabled %}<a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}">Xem chi tiết</a>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <a class="mini alt" href="/book/{{ brand.slug }}">← Về trang {{ brand.name }}</a>
+</section>
+
+{% endblock %}

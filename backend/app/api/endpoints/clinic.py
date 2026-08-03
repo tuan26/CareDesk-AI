@@ -9,11 +9,12 @@ from backend.app.models.models import (
     Clinic, Branch, Service, Doctor, WorkingSchedule, User, ChannelIntegration, AuditLog
 )
 from backend.app.schemas.schemas import (
-    ClinicOut, ClinicCreate, BranchOut, BranchCreate,
+    ClinicOut, ClinicCreate, BranchOut, BranchCreate, BranchUpdate,
     ServiceOut, ServiceCreate, DoctorOut, DoctorBase,
     WorkingScheduleOut, WorkingScheduleCreate,
     ChannelIntegrationIn, ChannelIntegrationOut
 )
+from backend.app.core.slug import assign_slug, change_slug
 from backend.app.services.audit import log_action
 
 router = APIRouter()
@@ -83,10 +84,44 @@ def create_branch(
         data["clinic_id"] = current_user.clinic_id
     db_branch = Branch(**data)
     db.add(db_branch)
+    db.flush()
+    assign_slug(db, db_branch)  # public URL is allocated up front, before landing is enabled
     log_action(db, current_user.id, "create_branch", f"Thêm chi nhánh: {db_branch.name}")
     db.commit()
     db.refresh(db_branch)
     return db_branch
+
+
+@router.patch("/branches/{branch_id}", response_model=BranchOut)
+def update_branch(
+    branch_id: int,
+    body: BranchUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner_or_admin)
+) -> Any:
+    branch = db.query(Branch).filter(Branch.id == branch_id).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chi nhánh.")
+    if current_user.clinic_id and branch.clinic_id != current_user.clinic_id:
+        raise HTTPException(status_code=403, detail="Chi nhánh không thuộc phòng khám của bạn.")
+
+    for field in ("name", "address", "phone", "working_hours", "landing_enabled", "is_active"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(branch, field, value)
+
+    # Changing the public URL is an explicit, separate action: renaming the
+    # branch above leaves the slug (and every printed QR code) untouched.
+    if body.slug is not None and body.slug != branch.slug:
+        try:
+            change_slug(db, branch, body.slug)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    log_action(db, current_user.id, "update_branch", f"Cập nhật chi nhánh: {branch.name}")
+    db.commit()
+    db.refresh(branch)
+    return branch
 
 @router.delete("/branches/{branch_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_branch(

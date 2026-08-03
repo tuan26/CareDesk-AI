@@ -50,6 +50,55 @@ def clinic_in_org(org_slug: str, clinic_slug: str, db: Session = Depends(get_db)
     )
 
 
+@router.get("/resolve/{brand_slug}", response_model=PublicClinicOut,
+            dependencies=[Depends(public_rate_limiter)])
+@router.get("/resolve/{brand_slug}/{branch_slug}", response_model=PublicClinicOut,
+            dependencies=[Depends(public_rate_limiter)])
+def resolve_public_chat_target(brand_slug: str, branch_slug: str | None = None,
+                               db: Session = Depends(get_db)):
+    """Resolve a public /chat/<brand>[/<branch>] URL to the clinic to talk to.
+
+    The public URL carries the brand (organization) and optionally a branch,
+    never the clinic - but the chat API is clinic-scoped, so the slug has to be
+    translated here. With a branch the mapping is exact; without one we fall
+    back to the brand's first active clinic.
+    """
+    from backend.app.models.models import Branch, SlugRegistry
+    from backend.app.core.slug import resolve as resolve_slug
+
+    clinic = None
+    if branch_slug:
+        row = resolve_slug(db, branch_slug)
+        if row and row.entity_type == "branch" and row.is_active:
+            branch = db.query(Branch).filter(Branch.id == row.entity_id).first()
+            if branch:
+                clinic = db.query(Clinic).filter(Clinic.id == branch.clinic_id).first()
+
+    if clinic is None:
+        row = resolve_slug(db, brand_slug)
+        if row is None or not row.is_active:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+        if row.entity_type == "clinic":
+            clinic = db.query(Clinic).filter(Clinic.id == row.entity_id).first()
+        elif row.entity_type == "organization":
+            clinic = (
+                db.query(Clinic)
+                .filter(Clinic.organization_id == row.entity_id,
+                        Clinic.is_active == True)  # noqa: E712
+                .order_by(Clinic.id)
+                .first()
+            )
+
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+    return PublicClinicOut(
+        clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
+        address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
+        default_locale=clinic.default_locale or "vi",
+        public_chat_v1_enabled=bool(clinic.public_chat_v1_enabled),
+    )
+
+
 @router.get("/org-by-slug/{slug}", dependencies=[Depends(public_rate_limiter)])
 def org_by_slug(slug: str, db: Session = Depends(get_db)):
     """Resolve a chain link /g/<slug> to the chain + its member clinics (each with its own link)."""

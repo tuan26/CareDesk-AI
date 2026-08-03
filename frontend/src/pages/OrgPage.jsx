@@ -103,8 +103,8 @@ export default function OrgPage() {
                 <td>
                   <div style={{ fontWeight: 600 }}>{c.name}</div>
                   {c.slug && c.org_slug && (
-                    <a href={`/book/${c.org_slug}/${c.slug}/chat`} target="_blank" rel="noreferrer"
-                      style={{ fontSize: 11, color: 'var(--primary-color)' }}>🔗 Link chat công khai</a>
+                    <a href={`/book/${c.org_slug}`} target="_blank" rel="noreferrer"
+                      style={{ fontSize: 11, color: 'var(--primary-color)' }}>🔗 Link phòng khám công khai</a>
                   )}
                 </td>
                 <td><span className="badge confirmed" style={{ textTransform: 'uppercase' }}>{c.plan}</span></td>
