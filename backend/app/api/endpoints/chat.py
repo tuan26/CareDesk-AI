@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
@@ -14,6 +14,10 @@ from backend.app.services.audit import log_action
 from backend.app.services.rate_limit import chat_rate_limiter
 from backend.app.services.ws_manager import ws_manager
 from backend.app.services.channel_gateway import reply_to_conversation_channel
+from backend.app.services.public_chat_session import (
+    issue_public_chat_session, verify_and_rotate_public_chat_session,
+)
+from backend.app.core.config import settings
 
 router = APIRouter()
 
@@ -22,6 +26,19 @@ def _scoped_conv(query, user: User):
     if user.clinic_id:
         return query.filter(Conversation.clinic_id == user.clinic_id)
     return query
+
+
+def _authorize_public_conversation(db: Session, conv: Conversation, session_token: Optional[str]) -> Optional[str]:
+    """Validate and rotate the pilot clinic's conversation-bound session."""
+    clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first() if conv.clinic_id else None
+    require_token = settings.PUBLIC_CHAT_REQUIRE_SESSION_TOKEN or bool(clinic and clinic.public_chat_v1_enabled)
+    if not require_token:
+        return None
+    valid, rotated_token = verify_and_rotate_public_chat_session(db, conv.id, session_token)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Phiên trò chuyện không hợp lệ hoặc đã hết hạn.")
+    return rotated_token
+
 
 
 @router.post("/conversations", response_model=ConversationOut, dependencies=[Depends(chat_rate_limiter)])
@@ -37,13 +54,18 @@ def start_conversation(
     if not lead_in.consent_given:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bạn cần đồng ý với chính sách bảo mật thông tin để bắt đầu cuộc trò chuyện."
+                        detail="Bạn cần đồng ý với chính sách bảo mật thông tin để bắt đầu cuộc trò chuyện."
         )
 
     clinic_id = lead_in.clinic_id
     if not clinic_id:
-        first_clinic = db.query(Clinic).order_by(Clinic.id.asc()).first()
-        clinic_id = first_clinic.id if first_clinic else None
+        clinics = db.query(Clinic).limit(2).all()
+        clinic_id = clinics[0].id if len(clinics) == 1 else None
+    clinic = db.query(Clinic).filter(Clinic.id == clinic_id, Clinic.is_active == True).first() if clinic_id else None  # noqa: E712
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám hoạt động cho cuộc trò chuyện.")
+    locale = lead_in.locale if lead_in.locale in {"vi", "ja", "en"} else clinic.default_locale
+
 
     # Check if patient lead already exists by phone (within the clinic)
     patient = None
@@ -82,35 +104,46 @@ def start_conversation(
         patient.consent_timestamp = datetime.utcnow()
         db.commit()
 
-    # Create new conversation
+        # Create new conversation
     conv = Conversation(
         clinic_id=clinic_id,
         patient_id=patient.id,
         channel=lead_in.source,
-        status="bot_active"
+        status="bot_active",
+        locale=locale,
     )
     db.add(conv)
     db.commit()
     db.refresh(conv)
 
     ws_manager.notify(clinic_id, {"type": "conversation_started", "conversation_id": conv.id})
+    # Optional field: legacy clients ignore it, V1 widgets retain and rotate it.
+    conv.public_session_token = issue_public_chat_session(db, conv.id)
+    db.commit()
     return conv
 
 
 @router.post("/conversations/{conv_id}/messages", response_model=MessageOut, dependencies=[Depends(chat_rate_limiter)])
 def send_message(
     *,
+    response: Response,
     db: Session = Depends(get_db),
     conv_id: int,
-    msg_in: MessageBase
+    msg_in: MessageBase,
+    x_caredesk_session: Optional[str] = Header(default=None)
 ) -> Any:
     """
     Patient sends a message. If the bot is active, the AI processes and replies.
-    After handoff, the message is stored for the human agent (no bot reply).
+        After handoff, the message is stored for the human agent (no bot reply).
     """
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
+
+    rotated_token = _authorize_public_conversation(db, conv, x_caredesk_session)
+    if rotated_token:
+        response.headers["X-CareDesk-Session"] = rotated_token
 
     # Save patient message
     patient_msg = Message(
@@ -159,17 +192,24 @@ def send_message(
 
 @router.get("/conversations/{conv_id}/messages", response_model=List[MessageOut], dependencies=[Depends(chat_rate_limiter)])
 def poll_messages(
+    response: Response,
     conv_id: int,
     after_id: int = 0,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_caredesk_session: Optional[str] = Header(default=None)
 ) -> Any:
     """
     Public polling endpoint for the chat widget: fetch messages newer than `after_id`
-    so patients can see human agent replies after a handoff.
+        so patients can see human agent replies after a handoff.
     """
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
+
+    rotated_token = _authorize_public_conversation(db, conv, x_caredesk_session)
+    if rotated_token:
+        response.headers["X-CareDesk-Session"] = rotated_token
     return db.query(Message).filter(
         Message.conversation_id == conv_id,
         Message.id > after_id

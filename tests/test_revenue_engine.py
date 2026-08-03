@@ -5,9 +5,10 @@ from sqlalchemy.orm import sessionmaker
 from backend.app.core.database import Base
 from backend.app.models.models import (
     Clinic, Branch, Service, Doctor, WorkingSchedule, PatientLead, Conversation,
-    DomainEvent, AutomationRule, ScheduledAction, RevenueRecord, ServicePackage,
-    PatientPackage, Appointment, ReviewRequest, WaitlistEntry
+        DomainEvent, AutomationRule, ScheduledAction, RevenueRecord, ServicePackage,
+    PatientPackage, Appointment, ReviewRequest, WaitlistEntry, BookingRequest
 )
+
 from backend.app.services.events import (
     emit_event, process_new_events, dispatch_due_actions, seed_default_automations
 )
@@ -61,12 +62,15 @@ def test_price_asked_schedules_followup_and_booking_cancels_it(db_session):
     followups = db.query(ScheduledAction).filter(ScheduledAction.status == "pending").all()
     assert len(followups) >= 2  # 2-day and 5-day follow-ups
 
-    # Patient then books -> appointment_created cancels pending follow-ups
+        # Patient sends a booking request -> it cancels pending follow-ups, before staff creates an appointment.
     process_chat_message(db, conv.id, "Tôi muốn đặt lịch trị mụn")
     process_chat_message(db, conv.id, "ngày mai")
     process_chat_message(db, conv.id, "1")
-    assert db.query(Appointment).count() == 1
+    assert db.query(Appointment).count() == 0
+    assert db.query(BookingRequest).count() == 1
+
     process_new_events(db)
+
 
     cancelled = db.query(ScheduledAction).filter(ScheduledAction.status == "cancelled").count()
     assert cancelled >= 2

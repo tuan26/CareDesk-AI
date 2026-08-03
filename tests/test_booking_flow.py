@@ -4,8 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from backend.app.core.database import Base
 from backend.app.models.models import (
-    Clinic, Branch, Service, Doctor, WorkingSchedule, PatientLead, Conversation, Appointment
+    Clinic, Branch, Service, Doctor, WorkingSchedule, PatientLead, Conversation, Appointment, BookingRequest
 )
+
 from backend.app.services.ai_engine import process_chat_message
 
 engine = create_engine("sqlite:///:memory:")
@@ -59,7 +60,10 @@ def db_session():
 
 
 def test_booking_end_to_end(db_session):
-    """AI completes a booking: intent -> date -> slot choice -> Appointment created."""
+    """AI submits a request: intent -> date -> slot choice -> BookingRequest created."""
+
+
+
     db, conv = db_session
 
     # 1. Intent with service; name/phone auto-filled from the lead -> bot asks for a date
@@ -76,16 +80,20 @@ def test_booking_end_to_end(db_session):
     proposed = conv.booking_state.get("proposed_slots")
     assert proposed and len(proposed) >= 1
 
-    # 3. Choose slot #1 -> appointment gets created as pending
+        # 3. Choose slot #1 -> only a request is created; staff must create the appointment.
+
     res, handoff = process_chat_message(db, conv.id, "1")
     assert handoff is False
-    assert "thành công" in res.lower()
+    assert "yêu cầu đặt lịch" in res.lower()
+    assert "chưa phải là lịch hẹn chính thức" in res.lower()
 
-    appt = db.query(Appointment).first()
-    assert appt is not None
-    assert appt.status == "pending"
-    assert appt.start_time.strftime("%H:%M") == proposed[0]
-    assert appt.patient_id == conv.patient_id
+    request = db.query(BookingRequest).first()
+    assert request is not None
+    assert request.status == "requested"
+    assert request.preferred_time.endswith(proposed[0])
+    assert request.patient_id == conv.patient_id
+    assert db.query(Appointment).count() == 0
+
 
 
 def test_booking_not_triggered_by_faq(db_session):

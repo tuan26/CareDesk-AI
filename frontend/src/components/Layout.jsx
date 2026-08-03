@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../api';
+import { useI18n } from '../i18n';
+
 
 export default function Layout() {
   const [user, setUser] = useState(null);
   const [actingClinic, setActingClinic] = useState(null);
   const navigate = useNavigate();
+  const { locale, setLocale, t } = useI18n();
+
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -67,39 +71,22 @@ export default function Layout() {
   };
 
   // Menu theo hành trình khách hàng (triết lý Revenue Engine)
-  const MENU_SECTIONS = [
-    {
-      label: 'Thu hút & Chốt khách',
-      items: [
-        { to: '/', icon: '📊', text: 'Tổng quan doanh thu', end: true },
-        { to: '/inbox', icon: '💬', text: 'Hộp thư AI (Inbox)' },
-        { to: '/appointments', icon: '📅', text: 'Lịch hẹn' },
-      ]
-    },
-    {
-      label: 'Giữ khách & Tăng doanh thu',
-      items: [
-        { to: '/patients', icon: '👥', text: 'Khách hàng (CRM)' },
-        { to: '/packages', icon: '🎁', text: 'Gói liệu trình' },
-        { to: '/automation', icon: '⚡', text: 'Automation' },
-      ]
-    },
-    {
-      label: 'Phân tích',
-      items: [
-        { to: '/reports', icon: '📈', text: 'Báo cáo ROI' },
-      ]
-    },
-    {
-      label: 'Hệ thống',
-      items: [
-        { to: '/clinic', icon: '🏥', text: 'Phòng khám' },
-        { to: '/services', icon: '🧴', text: 'Dịch vụ & Giá' },
-        { to: '/doctors', icon: '🩺', text: 'Bác sĩ & Lịch làm' },
-        { to: '/settings', icon: '⚙️', text: 'Cài đặt & AI Eval' },
-      ]
-    }
+    const MENU_SECTIONS = [
+    { label: t('attract'), items: [
+      { to: '/', icon: '📊', text: t('dashboard'), end: true },
+      { to: '/inbox', icon: '💬', text: t('inbox') },
+      { to: '/booking-requests', icon: '📨', text: t('bookings') },
+      { to: '/appointments', icon: '📅', text: t('appointments') },
+    ] },
+    { label: t('retain'), items: [
+      { to: '/patients', icon: '👥', text: t('patients') }, { to: '/packages', icon: '🎁', text: t('packages') }, { to: '/automation', icon: '⚡', text: t('automation') },
+    ] },
+    { label: t('analytics'), items: [{ to: '/reports', icon: '📈', text: t('reports') }] },
+    { label: t('system'), items: [
+      { to: '/clinic', icon: '🏥', text: t('clinic') }, { to: '/services', icon: '🧴', text: t('services') }, { to: '/doctors', icon: '🩺', text: t('doctors') }, { to: '/settings', icon: '⚙️', text: t('settings') },
+    ] },
   ];
+
 
   return (
     <div className="app-container">
@@ -128,13 +115,18 @@ export default function Layout() {
             </div>
           ))}
         </div>
-        <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
+                <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
+          <select aria-label="Language" value={locale} onChange={(e) => setLocale(e.target.value)} style={{ width: '100%', marginBottom: 8, padding: '7px', borderRadius: 5 }}>
+            <option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ja">日本語</option>
+          </select>
           <button 
+ 
             className="btn btn-secondary" 
             style={{ width: '100%', background: 'transparent', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.2)', fontSize: '13px' }}
             onClick={handleLogout}
           >
-            Đăng xuất
+                        {t('logout')}
+
           </button>
         </div>
       </aside>

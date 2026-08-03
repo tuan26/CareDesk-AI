@@ -2,8 +2,16 @@
   // Per-site config: <script>window.CareDeskConfig = { apiBase: "...", clinicId: 1 }</script>
   const CONFIG = window.CareDeskConfig || {};
   const API_BASE = (CONFIG.apiBase || "http://localhost:8000") + "/api/v1";
-  const CLINIC_ID = CONFIG.clinicId || 1;
+    const CLINIC_ID = CONFIG.clinicId || 1;
+    const LOCALE = ["vi", "ja", "en"].includes(CONFIG.locale) ? CONFIG.locale : "vi";
+  const COPY = {
+    vi: { title: "Lễ tân ảo CareDesk AI", active: "Hoạt động 24/7", name: "Họ và tên *", phone: "Số điện thoại *", email: "Email (Nhận nhắc lịch)", start: "Bắt đầu trò chuyện", connecting: "Đang kết nối...", input: "Nhập tin nhắn...", welcome: "Chào bạn {name}, tôi là trợ lý ảo CareDesk AI. Tôi có thể giúp bạn giải đáp dịch vụ, bảng giá phòng khám hoặc hỗ trợ gửi yêu cầu đặt lịch. Bạn đang quan tâm dịch vụ nào ạ?", connectError: "Lỗi kết nối đến máy chủ. Vui lòng thử lại sau.", sendError: "Rất tiếc, đã xảy ra lỗi kết nối. Vui lòng gửi lại." },
+    en: { title: "CareDesk AI Virtual Receptionist", active: "Available 24/7", name: "Full name *", phone: "Phone number *", email: "Email (for reminders)", start: "Start chat", connecting: "Connecting...", input: "Type a message...", welcome: "Hello {name}, I am the CareDesk AI assistant. I can help with services, prices, clinic information, or a booking request. Which service are you interested in?", connectError: "Could not connect to the server. Please try again.", sendError: "Sorry, a connection error occurred. Please send your message again." },
+    ja: { title: "CareDesk AI 受付アシスタント", active: "24時間対応", name: "お名前 *", phone: "電話番号 *", email: "メールアドレス（リマインダー用）", start: "チャットを開始", connecting: "接続中...", input: "メッセージを入力...", welcome: "{name}様、こんにちは。CareDesk AIアシスタントです。サービス、料金、クリニック情報、予約リクエストをお手伝いします。ご希望のサービスはありますか？", connectError: "サーバーに接続できませんでした。もう一度お試しください。", sendError: "接続エラーが発生しました。もう一度メッセージを送信してください。" }
+  };
+  const t = (key, values = {}) => (COPY[LOCALE][key] || COPY.vi[key] || key).replace(/\{(\w+)\}/g, (_, name) => values[name] || "");
   let conversationId = null;
+  let publicSessionToken = null;
   let lastMessageId = 0;   // for polling agent replies
   let pollTimer = null;
 
@@ -40,8 +48,8 @@
       <div class="caredesk-header-info">
         <div class="caredesk-avatar">CD</div>
         <div>
-          <div class="caredesk-title">Lễ tân ảo CareDesk AI</div>
-          <div class="caredesk-status"><span class="status-dot"></span>Hoạt động 24/7</div>
+          <div class="caredesk-title">${t("title")}</div>
+                    <div class="caredesk-status"><span class="status-dot"></span>${t("active")}</div>
         </div>
       </div>
       <button class="caredesk-close-btn">&times;</button>
@@ -52,15 +60,15 @@
       <div class="caredesk-consent-body">
         <p class="consent-intro">Vui lòng cung cấp thông tin để trợ lý ảo hỗ trợ bạn đặt lịch hẹn và tư vấn dịch vụ.</p>
         <div class="form-group">
-          <label for="cd-name">Họ và tên *</label>
+          <label for="cd-name">${t("name")}</label>
           <input type="text" id="cd-name" placeholder="Nguyễn Văn A" required>
         </div>
         <div class="form-group">
-          <label for="cd-phone">Số điện thoại *</label>
+          <label for="cd-phone">${t("phone")}</label>
           <input type="tel" id="cd-phone" placeholder="0901234567" required>
         </div>
         <div class="form-group">
-          <label for="cd-email">Email (Nhận nhắc lịch)</label>
+          <label for="cd-email">${t("email")}</label>
           <input type="email" id="cd-email" placeholder="example@gmail.com">
         </div>
         <div class="form-group">
@@ -71,7 +79,7 @@
           <input type="checkbox" id="cd-consent" value="true">
           <label for="cd-consent">Tôi đồng ý cho phép CareDesk AI lưu trữ thông tin liên hệ để đặt lịch khám.</label>
         </div>
-        <button id="cd-start-chat-btn" class="cd-btn-primary" disabled>Bắt đầu trò chuyện</button>
+        <button id="cd-start-chat-btn" class="cd-btn-primary" disabled>${t("start")}</button>
       </div>
     </div>
 
@@ -85,7 +93,7 @@
       </div>
 
       <div class="caredesk-input-area">
-        <input type="text" id="caredesk-chat-input" placeholder="Nhập tin nhắn..." autocomplete="off">
+        <input type="text" id="caredesk-chat-input" placeholder="${t("input")}" autocomplete="off">
         <button id="caredesk-send-btn">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
             <path d="M3.4 22a.8.8 0 01-.78-.96l1.62-7.04L16 12 4.24 9.98 2.62 2.96A.8.8 0 013.7 2.05l18 9a.8.8 0 010 1.9l-18 9a.8.8 0 01-.3.05z"/>
@@ -139,16 +147,20 @@
       source: "web",
       consent_given: true,
       clinic_id: CLINIC_ID,
+      locale: LOCALE,
       referral_code_used: referralInput && referralInput.value.trim() ? referralInput.value.trim() : null
     };
 
     startBtn.disabled = true;
-    startBtn.innerText = "Đang kết nối...";
+    startBtn.innerText = t("connecting");
 
     try {
       const response = await fetch(`${API_BASE}/chat/conversations`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(publicSessionToken ? { "X-CareDesk-Session": publicSessionToken } : {})
+        },
         body: JSON.stringify(payload)
       });
 
@@ -157,21 +169,22 @@
       }
 
       const data = await response.json();
-      conversationId = data.id;
+            conversationId = data.id;
+      publicSessionToken = data.public_session_token || null;
 
       // Switch Screens
       chatbox.querySelector("#caredesk-consent-screen").style.display = "none";
       chatbox.querySelector("#caredesk-chat-screen").style.display = "flex";
 
       // Insert Initial Bot Welcome Message
-      appendMessage("bot", `Chào bạn ${payload.full_name}, tôi là trợ lý ảo CareDesk AI. Tôi có thể giúp bạn giải đáp dịch vụ, bảng giá phòng khám hoặc hỗ trợ đặt lịch hẹn khám nhanh chóng. Bạn đang quan tâm dịch vụ nào ạ?`);
+      appendMessage("bot", t("welcome", { name: payload.full_name }));
 
       // Poll for human agent replies (after handoff, receptionist chats from the dashboard)
       pollTimer = setInterval(pollAgentMessages, 4000);
     } catch (err) {
-      alert("Lỗi kết nối đến máy chủ. Vui lòng thử lại sau.");
+      alert(t("connectError"));
       startBtn.disabled = false;
-      startBtn.innerText = "Bắt đầu trò chuyện";
+      startBtn.innerText = t("start");
       console.error(err);
     }
   });
@@ -211,7 +224,10 @@
     try {
       const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(publicSessionToken ? { "X-CareDesk-Session": publicSessionToken } : {})
+        },
         body: JSON.stringify({ content: text })
       });
 
@@ -219,10 +235,11 @@
       const typingEl = document.getElementById("cd-typing");
       if (typingEl) typingEl.remove();
 
-      if (!response.ok) {
+            if (!response.ok) {
         throw new Error("Lỗi gửi tin nhắn");
       }
 
+      publicSessionToken = response.headers.get("X-CareDesk-Session") || publicSessionToken;
       const data = await response.json();
       if (data.id) lastMessageId = Math.max(lastMessageId, data.id);
 
@@ -240,7 +257,7 @@
     } catch (err) {
       const typingEl = document.getElementById("cd-typing");
       if (typingEl) typingEl.remove();
-      appendMessage("bot", "Rất tiếc, đã xảy ra lỗi kết nối. Vui lòng gửi lại.");
+      appendMessage("bot", t("sendError"));
       console.error(err);
     }
   }
@@ -254,8 +271,11 @@
   async function pollAgentMessages() {
     if (!conversationId) return;
     try {
-      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages?after_id=${lastMessageId}`);
+      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages?after_id=${lastMessageId}`, {
+        headers: publicSessionToken ? { "X-CareDesk-Session": publicSessionToken } : {}
+      });
       if (!response.ok) return;
+      publicSessionToken = response.headers.get("X-CareDesk-Session") || publicSessionToken;
       const messages = await response.json();
       for (const msg of messages) {
         if (msg.id > lastMessageId) lastMessageId = msg.id;

@@ -8,6 +8,7 @@ from backend.app.models.models import (
     Conversation, Message, PatientLead, Service, Doctor, WorkingSchedule, Appointment, AISafetyRule,
     Clinic, Branch
 )
+from backend.app.services.i18n import locale_for_conversation, normalize_locale, service_content
 
 # Initialize OpenAI client if API key is provided
 openai_client = None
@@ -133,7 +134,7 @@ def build_clinic_identity(db: Session, clinic: Optional[Clinic]) -> str:
     return "\n".join(lines)
 
 
-def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None) -> str:
+def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None, locale: str = "vi") -> str:
     """
     Simple RAG implementation, STRICTLY scoped to one clinic: matches query
     keywords against THIS clinic's services + FAQ. Never reads other tenants' data.
@@ -143,37 +144,37 @@ def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None) -> s
 
     # Always give the model the clinic identity (name/address/branch hours) so it
     # can reliably answer "địa chỉ / mấy giờ" even when the query also hits a service.
-    context_chunks = [build_clinic_identity(db, clinic)]
+    context_chunks = [build_clinic_identity(db, clinic)]  # clinic identity
     matched_chunks = []
 
     query_lower = query.lower()
+    locale = normalize_locale(locale)
     for service in services:
-        matched = False
-        if service.name.lower() in query_lower:
-            matched = True
-        else:
-            for word in service.name.lower().split():
-                if len(word) > 2 and word in query_lower:
-                    matched = True
-                    break
+        content = service_content(service, locale)
+        names = (service.name, content["name"])
+        matched = any(name and name.lower() in query_lower for name in names)
+        if not matched:
+            matched = any(
+                len(word) > 2 and word in query_lower
+                for name in names for word in name.lower().split()
+            )
 
         if matched:
-            chunk = f"Dịch vụ: {service.name}. Giá: {service.price:,.0f} VNĐ. Thời lượng: {service.duration_minutes} phút. Mô tả: {service.description}."
-            if service.preparation_instructions:
-                chunk += f" Chuẩn bị trước khi khám: {service.preparation_instructions}"
+            chunk = f"Service: {content['name']}. Price: {service.price:,.0f} VND. Duration: {service.duration_minutes} minutes. Description: {content['description']}."
+            if content["preparation_instructions"]:
+                chunk += f" Preparation: {content['preparation_instructions']}"
             matched_chunks.append(chunk)
-
-            # Append FAQs of this service
-            if service.faq_data:
-                for faq in service.faq_data:
-                    matched_chunks.append(f"Hỏi: {faq['question']} -> Đáp: {faq['answer']}")
+            for faq in content["faq"]:
+                if isinstance(faq, dict) and faq.get("question") and faq.get("answer"):
+                    matched_chunks.append(f"Q: {faq['question']} -> A: {faq['answer']}")
 
     if matched_chunks:
         context_chunks.extend(matched_chunks)
     else:
         # No specific service matched: list this clinic's full catalogue briefly
         for service in services:
-            context_chunks.append(f"- Dịch vụ {service.name}: giá {service.price:,.0f} VNĐ (Thời gian: {service.duration_minutes} phút).")
+            content = service_content(service, locale)
+            context_chunks.append(f"- Service {content['name']}: price {service.price:,.0f} VND (duration: {service.duration_minutes} minutes).")
 
     return "\n".join(context_chunks)
 
@@ -233,35 +234,42 @@ def extract_booking_entities_mock(text: str) -> Dict[str, Any]:
     return entities
 
 
-def call_openai_gpt_mock(db: Session, clinic: Optional[Clinic], user_query: str) -> str:
+def call_openai_gpt_mock(db: Session, clinic: Optional[Clinic], user_query: str, locale: str = "vi") -> str:
     """
     Fallback AI response when no OpenAI key is set. Data-driven from THIS clinic's
     own catalogue/branches — no hardcoded clinic name, price or address, so it is
-    correct for every tenant (not just the CareDesk demo).
+        correct for every tenant (not just the CareDesk demo).
     """
     query_lower = user_query.lower()
+    locale = normalize_locale(locale)
     services = clinic_services(db, clinic)
-    clinic_name = clinic.name if clinic else "phòng khám"
+    clinic_name = clinic.name if clinic else "clinic"
 
     def _match_service(q: str) -> Optional[Service]:
         # Rank by number of matching name-words so a specific hit ("trị mụn")
-        # beats an incidental one ("phòng khám" -> "Khám da liễu").
+                # beats an incidental one ("phòng khám" -> "Khám da liễu").
         best, best_hits = None, 0
         for s in services:
-            name = s.name.lower()
-            if name in q:
+            names = (s.name, service_content(s, locale)["name"])
+            if any(name.lower() in q for name in names):
                 return s
-            hits = sum(1 for w in name.split() if len(w) > 2 and w in q)
+            hits = max(sum(1 for w in name.lower().split() if len(w) > 2 and w in q) for name in names)
             if hits > best_hits:
                 best, best_hits = s, hits
         return best if best_hits >= 1 else None
 
-    # 1. Pricing
-    if any(k in query_lower for k in ("giá", "bao nhiêu", "phí")):
+        
+    
+        # 1. Pricing
+    if any(k in query_lower for k in ("giá", "bao nhiêu", "phí", "price", "cost", "料金")):
         s = _match_service(query_lower)
         if s:
-            return (f"Dạ, dịch vụ {s.name} tại {clinic_name} có giá {s.price:,.0f}đ "
-                    f"cho {s.duration_minutes} phút. Bạn có muốn đặt lịch hẹn không ạ?")
+            name = service_content(s, locale)["name"]
+            if locale == "en":
+                return f"{name} at {clinic_name} costs {s.price:,.0f} VND and takes {s.duration_minutes} minutes. Would you like to make a booking request?"
+            if locale == "ja":
+                return f"{clinic_name}の{name}は{s.price:,.0f} VND、所要時間は{s.duration_minutes}分です。予約リクエストをご希望ですか？"
+            return f"Dạ, dịch vụ {name} tại {clinic_name} có giá {s.price:,.0f}đ cho {s.duration_minutes} phút. Bạn có muốn gửi yêu cầu đặt lịch không ạ?"
         if services:
             listing = "; ".join(f"{s.name} ({s.price:,.0f}đ)" for s in services[:6])
             return f"Dạ, {clinic_name} hiện có các dịch vụ: {listing}. Bạn đang quan tâm dịch vụ nào ạ?"
@@ -462,7 +470,8 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     # 4. RAG context preparation (strictly scoped to this conversation's clinic)
     clinic = resolve_clinic(db, conv.clinic_id)
     clinic_name = clinic.name if clinic else "phòng khám"
-    rag_context = query_faq_rag(db, user_message, clinic_id=conv.clinic_id)
+    locale = locale_for_conversation(conv, clinic)
+    rag_context = query_faq_rag(db, user_message, clinic_id=conv.clinic_id, locale=locale)
 
     # 5. Build System Prompt from THIS clinic's real identity/data (no hardcoded brand)
     system_prompt = f"""Bạn là trợ lý lễ tân ảo AI chuyên nghiệp của '{clinic_name}'.
@@ -470,7 +479,8 @@ Quy tắc hoạt động bắt buộc:
 1. KHÔNG được chẩn đoán bệnh, KHÔNG kê đơn thuốc, KHÔNG hướng dẫn người bệnh tự xử lý tại nhà khi có dấu hiệu bất thường.
 2. LUÔN trả lời ngắn gọn, lịch sự, xưng tên phòng khám và gọi khách hàng là 'bạn'.
 3. Chỉ được trả lời dựa trên thông tin phòng khám được cung cấp dưới đây. Tuyệt đối không tự bịa đặt thông tin, dịch vụ hoặc giá cả không có trong dữ liệu.
-4. Nếu khách hàng muốn đặt lịch, hãy khéo léo hỏi các thông tin còn thiếu: Họ tên, Số điện thoại, Dịch vụ muốn thực hiện (chỉ trong danh mục dưới đây). Sau khi có đủ thông tin, đề xuất giờ trống và hướng dẫn xác nhận.
+4. Nếu khách hàng muốn đặt lịch, hãy thu thập thông tin còn thiếu và gửi booking request. KHÔNG được nói đó là lịch hẹn đã xác nhận hoặc tạo Appointment.
+5. ALWAYS answer in the patient's locale: {locale} (vi=Vietnamese, en=English, ja=Japanese).
 
 BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
 {rag_context}
@@ -495,10 +505,10 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
             evaluation_meta["model"] = settings.LLM_MODEL
         except Exception as e:
             print(f"OpenAI API call failed: {e}. Falling back to Mock.")
-            ai_response = call_openai_gpt_mock(db, clinic, user_message)
+            ai_response = call_openai_gpt_mock(db, clinic, user_message, locale)
             evaluation_meta["fallback_mock"] = True
     else:
-        ai_response = call_openai_gpt_mock(db, clinic, user_message)
+        ai_response = call_openai_gpt_mock(db, clinic, user_message, locale)
         evaluation_meta["fallback_mock"] = True
 
     # 7. Check if AI response itself implies handoff (e.g. LLM decided it can't answer or requested handoff)

@@ -268,10 +268,10 @@ def run_engine_tick(db: Session):
 
 DEFAULT_RULES = [
     dict(name="Follow-up khách hỏi giá (2 ngày)", trigger_type="event", trigger_event="price_asked",
-         delay_minutes=2 * 24 * 60, cancel_on_events=["appointment_created"], action_type="send_message",
+         delay_minutes=2 * 24 * 60, cancel_on_events=["booking_request_created", "appointment_created"], action_type="send_message",
          message_template="Chào {name}, hôm trước bạn có quan tâm {service} bên {clinic}. Bạn còn muốn tìm hiểu thêm không ạ? Em có thể tư vấn chi tiết hoặc giữ lịch khám cho bạn nhé!"),
     dict(name="Follow-up khách hỏi giá (5 ngày - ưu đãi)", trigger_type="event", trigger_event="price_asked",
-         delay_minutes=5 * 24 * 60, cancel_on_events=["appointment_created"], action_type="send_message",
+         delay_minutes=5 * 24 * 60, cancel_on_events=["booking_request_created", "appointment_created"], action_type="send_message",
          message_template="Chào {name}, {clinic} đang có ưu đãi cho {service} trong tuần này. Bạn muốn em giữ một suất khám tư vấn miễn phí không ạ?"),
     dict(name="Nhắc tái khám sau 30 ngày", trigger_type="event", trigger_event="appointment_completed",
          delay_minutes=30 * 24 * 60, cancel_on_events=["appointment_created"], action_type="send_message",

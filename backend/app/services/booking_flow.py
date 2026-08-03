@@ -1,22 +1,32 @@
 """
-Rule-based booking state machine: lets the AI receptionist take a booking
-end-to-end inside the chat (collect info -> propose real free slots -> create
-a pending Appointment). Works fully offline (no LLM required); the state is
-persisted on Conversation.booking_state.
+Rule-based booking-request state machine. It collects a patient's preferred
+service/time and creates an administrative BookingRequest; only staff or a
+calendar integration may create a confirmed Appointment.
 """
 import re
 from datetime import date, datetime, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from backend.app.models.models import (
-    Conversation, PatientLead, Service, Doctor, WorkingSchedule, Branch, Appointment,
-    Clinic, WaitlistEntry, ScheduledAction
+    BookingRequest, Conversation, PatientLead, Service, Doctor, WorkingSchedule,
+    Branch, WaitlistEntry
 )
+from backend.app.services.i18n import booking_text, locale_for_conversation, service_content
 from backend.app.services.events import emit_event
 
-BOOKING_INTENT_KEYWORDS = ["đặt lịch", "đặt hẹn", "book lịch", "muốn hẹn", "lịch hẹn", "đăng ký khám"]
-CANCEL_KEYWORDS = ["hủy đặt lịch", "không đặt nữa", "thôi không đặt", "hủy luôn"]
-FAQ_KEYWORDS = ["giá", "bao nhiêu", "phí", "địa chỉ", "ở đâu", "mấy giờ", "mở cửa", "chi nhánh"]
+BOOKING_INTENT_KEYWORDS = [
+    "đặt lịch", "đặt hẹn", "book lịch", "muốn hẹn", "lịch hẹn", "đăng ký khám",
+    "book an appointment", "make an appointment", "booking", "予約", "予約したい",
+]
+CANCEL_KEYWORDS = ["hủy đặt lịch", "không đặt nữa", "thôi không đặt", "hủy luôn", "cancel", "キャンセル"]
+FAQ_KEYWORDS = [
+    "giá", "bao nhiêu", "phí", "địa chỉ", "ở đâu", "mấy giờ", "mở cửa", "chi nhánh",
+    "price", "cost", "address", "hours", "location", "料金", "住所", "営業時間",
+]
+
+
+def _say(locale: str, vi: str, en: str, ja: str) -> str:
+    return {"vi": vi, "en": en, "ja": ja}.get(locale, en)
 
 SERVICE_KEYWORD_MAP = [
     (["nặn mụn", "trị mụn", "mụn"], "Điều trị mụn Chuẩn Y Khoa"),
@@ -34,11 +44,11 @@ WEEKDAY_PATTERNS = [
 def _parse_date(text_lower: str) -> Optional[str]:
     """Parse a target date from Vietnamese text. Returns ISO date string."""
     today = date.today()
-    if "ngày kia" in text_lower:
+    if "ngày kia" in text_lower or "day after tomorrow" in text_lower or "明後日" in text_lower:
         return (today + timedelta(days=2)).isoformat()
-    if "mai" in text_lower:
+    if "mai" in text_lower or "tomorrow" in text_lower or "明日" in text_lower:
         return (today + timedelta(days=1)).isoformat()
-    if "hôm nay" in text_lower or "bữa nay" in text_lower:
+    if "hôm nay" in text_lower or "bữa nay" in text_lower or "today" in text_lower or "今日" in text_lower:
         return today.isoformat()
 
     for pattern, weekday in WEEKDAY_PATTERNS:
@@ -66,7 +76,7 @@ def _parse_time(text_lower: str) -> Optional[str]:
     m = re.search(r"\b(\d{1,2}):(\d{2})\b", text_lower)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
-    m = re.search(r"\b(\d{1,2})\s*(?:h|giờ)(?:\s*(\d{2}))?", text_lower)
+    m = re.search(r"\b(\d{1,2})\s*(?:h|giờ|am|pm|時)(?:\s*(\d{2}))?", text_lower)
     if m:
         minute = int(m.group(2)) if m.group(2) else 0
         return f"{int(m.group(1)):02d}:{minute:02d}"
@@ -88,7 +98,7 @@ def _parse_name(text: str) -> Optional[str]:
     return None
 
 
-def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str) -> Optional[Service]:
+def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str, locale: str = "vi") -> Optional[Service]:
     query = db.query(Service)
     if clinic_id:
         query = query.filter(Service.clinic_id == clinic_id)
@@ -96,7 +106,8 @@ def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str) -> 
     if not services:
         return None
 
-    # 1. Known keyword mapping (matches the seeded catalogue)
+        
+    # Match legacy seed aliases first.
     for keywords, target_name in SERVICE_KEYWORD_MAP:
         if any(kw in text_lower for kw in keywords):
             for s in services:
@@ -104,10 +115,14 @@ def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str) -> 
                     return s
             break
 
-    # 2. Fuzzy: service whose name words appear in the text
+    # 2. Fuzzy match against both the legacy and requested localized service name.
     best, best_hits = None, 0
     for s in services:
-        hits = sum(1 for w in s.name.lower().split() if len(w) > 2 and w in text_lower)
+        names = [s.name, service_content(s, locale)["name"]]
+        hits = max(
+            (sum(1 for w in name.lower().split() if len(w) > 2 and w in text_lower) for name in names),
+            default=0,
+        )
         if hits > best_hits:
             best, best_hits = s, hits
     return best if best_hits >= 2 else None
@@ -135,8 +150,12 @@ def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: d
     return None, None, []
 
 
-def _fmt_date_vn(iso_date: str) -> str:
+def _fmt_date(iso_date: str, locale: str) -> str:
     d = date.fromisoformat(iso_date)
+    if locale == "ja":
+        return f"{d.year}年{d.month}月{d.day}日"
+    if locale == "en":
+        return d.strftime("%A, %d %B %Y")
     days = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
     return f"{days[d.weekday()]} ngày {d.strftime('%d/%m/%Y')}"
 
@@ -149,6 +168,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     """
     state = dict(conv.booking_state or {})
     text_lower = user_message.lower()
+    locale = locale_for_conversation(conv, None)
     has_intent = any(kw in text_lower for kw in BOOKING_INTENT_KEYWORDS)
 
     if not state.get("active") and not has_intent:
@@ -158,10 +178,10 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     if state.get("active") and any(kw in text_lower for kw in CANCEL_KEYWORDS):
         conv.booking_state = {"active": False}
         db.commit()
-        return "Dạ, tôi đã hủy yêu cầu đặt lịch. Nếu bạn cần hỗ trợ thêm về dịch vụ hoặc muốn đặt lại lịch hẹn, cứ nhắn cho tôi nhé!"
+        return _say(locale, "Dạ, tôi đã hủy yêu cầu đặt lịch. Nếu bạn cần hỗ trợ thêm, cứ nhắn cho tôi nhé!", "Your booking request has been cancelled. Please message me if you need further help.", "予約リクエストをキャンセルしました。ほかにお手伝いできることがあればお知らせください。")
 
     # Extract entities from this message
-    new_service = _resolve_service(db, conv.clinic_id, text_lower)
+    new_service = _resolve_service(db, conv.clinic_id, text_lower, locale)
     new_date = _parse_date(text_lower)
     new_time = _parse_time(text_lower)
     new_phone = _parse_phone(user_message)
@@ -211,15 +231,22 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     service = db.query(Service).filter(Service.id == state.get("service_id")).first() if state.get("service_id") else None
 
     # --- Decide the next question / action ---
+
     if not service:
         query = db.query(Service)
         if conv.clinic_id:
             query = query.filter(Service.clinic_id == conv.clinic_id)
-        listing = "\n".join(f"- {s.name} ({s.price:,.0f}đ)" for s in query.all())
+        listing = "\n".join(
+            f"- {service_content(s, locale)['name']} ({s.price:,.0f}đ)" for s in query.all()
+        )
         conv.booking_state = state
         db.commit()
-        return (f"Dạ, tôi rất sẵn lòng hỗ trợ bạn đặt lịch hẹn! Phòng khám hiện có các dịch vụ:\n{listing}\n"
-                f"Bạn muốn đặt lịch dịch vụ nào ạ?")
+        return _say(
+            locale,
+            f"Dạ, tôi rất sẵn lòng hỗ trợ bạn đặt lịch hẹn! Phòng khám hiện có các dịch vụ:\n{listing}\nBạn muốn đặt lịch dịch vụ nào ạ?",
+            f"I can help with a booking request. The clinic offers:\n{listing}\nWhich service would you like?",
+            f"予約リクエストをお手伝いします。ご利用いただけるサービス:\n{listing}\nご希望のサービスを教えてください。",
+        )
 
     # Waitlist opt-in: patient answered "chờ" after we offered the waitlist
     if state.get("waitlist_offered") and re.search(r"\bchờ\b|danh sách chờ|waitlist", text_lower):
@@ -271,7 +298,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
             state.pop("proposed_slots", None)
             conv.booking_state = state
             db.commit()
-            return (f"Rất tiếc {_fmt_date_vn(target_date.isoformat())} các bác sĩ đã kín lịch hoặc không có ca làm việc. "
+            return (f"Rất tiếc {_fmt_date(target_date.isoformat(), locale)} các bác sĩ đã kín lịch hoặc không có ca làm việc. "
                     f"Bạn có thể chọn một ngày khác, hoặc nhắn 'chờ' để tôi đưa bạn vào danh sách chờ — "
                     f"có khách hủy lịch là tôi báo bạn ngay để nhận chỗ trước nhé!")
         state["doctor_id"] = doctor.id
@@ -281,84 +308,42 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         conv.booking_state = state
         db.commit()
         numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(top))
-        return (f"Dạ, {_fmt_date_vn(state['date'])} bác sĩ {doctor.name} còn các khung giờ trống:\n{numbered}\n"
+        return (f"Dạ, {_fmt_date(state['date'], locale)} bác sĩ {doctor.name} còn các khung giờ trống:\n{numbered}\n"
                 f"Bạn vui lòng chọn một khung giờ (nhắn số 1/2/3 hoặc giờ cụ thể) nhé ạ.")
 
-    # --- All info collected: create the appointment ---
-    slot_h, slot_m = map(int, state["slot"].split(":"))
-    start_dt = datetime.combine(target_date, datetime.min.time()).replace(hour=slot_h, minute=slot_m)
-    end_dt = start_dt + timedelta(minutes=service.duration_minutes)
-
-    # Sync lead identity
-    if lead:
-        if state.get("full_name") and not lead.full_name:
-            lead.full_name = state["full_name"]
-        if state.get("phone") and not lead.phone:
-            lead.phone = state["phone"]
-
-    # Attribution: booked after an automation follow-up in the last 7 days -> ai_followup
-    recent_followup = db.query(ScheduledAction).filter(
-        ScheduledAction.patient_id == conv.patient_id,
-        ScheduledAction.status == "sent",
-        ScheduledAction.executed_at != None,  # noqa: E711
-        ScheduledAction.executed_at >= datetime.now() - timedelta(days=7)
-    ).first()
-    booking_source = "ai_followup" if recent_followup else "ai_chat"
-
-    # Deposit policy of the clinic
-    clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first() if conv.clinic_id else None
-    deposit_amount = (clinic.deposit_amount or 0) if clinic else 0
-
-    appt = Appointment(
+        
+    # All details are present. A public chat never reserves inventory or creates an
+    # appointment: it records only the patient's preference for staff confirmation.
+    service_name = service_content(service, locale)["name"]
+    preferred_time = f"{state['date']} {state['slot']}"
+    request = BookingRequest(
         clinic_id=conv.clinic_id,
+        conversation_id=conv.id,
         patient_id=conv.patient_id,
         service_id=service.id,
-        doctor_id=state["doctor_id"],
-        branch_id=state.get("branch_id"),
-        start_time=start_dt,
-        end_time=end_dt,
-        status="awaiting_deposit" if deposit_amount > 0 else "pending",
-        booking_source=booking_source,
-        conversation_id=conv.id,
-        note=f"Đặt qua trợ lý AI (hội thoại #{conv.id})"
-    )
-    db.add(appt)
+        locale=locale,
+        service_or_need=service_name,
+        preferred_time=preferred_time,
+        full_name=state["full_name"],
+        contact_method="phone",
+        contact_value=state["phone"],
+        note=_say(locale, f"Gửi từ hội thoại #{conv.id}", f"Submitted from conversation #{conv.id}", f"会話 #{conv.id} から送信"),
+        )
+    db.add(request)
     db.flush()
 
-    emit_event(db, conv.clinic_id, "appointment_created", patient_id=conv.patient_id,
-               payload={"appointment_id": appt.id, "service_id": service.id,
-                        "service_name": service.name, "source": booking_source})
+    emit_event(
+        db, conv.clinic_id, "booking_request_created", patient_id=conv.patient_id,
+        payload={"booking_request_id": request.id, "service_id": service.id, "service_name": service_name},
+    )
+    conv.booking_state = {"active": False, "last_booking_request_id": request.id}
 
-    # Feed the booking back to Meta ads (CAPI) so campaigns optimize for real bookings
-    try:
-        from backend.app.services.capi import send_capi_event
-        send_capi_event(db, conv.clinic_id, "Schedule", phone=state.get("phone"),
-                        value=service.price, external_id=lead.external_id if lead else None)
-    except Exception as e:
-        print(f"[CAPI] skipped: {e}")
-
-    conv.booking_state = {"active": False, "last_appointment_created": True}
     db.commit()
 
-    doctor = db.query(Doctor).filter(Doctor.id == state["doctor_id"]).first()
-    branch = db.query(Branch).filter(Branch.id == state.get("branch_id")).first()
-
-    base_msg = (f"✅ Tôi đã đặt lịch hẹn thành công cho bạn:\n"
-                f"- Họ tên: {state['full_name']} ({state['phone']})\n"
-                f"- Dịch vụ: {service.name}\n"
-                f"- Bác sĩ: {doctor.name if doctor else 'Sẽ được phân bổ'}\n"
-                f"- Chi nhánh: {branch.name if branch else 'Trụ sở chính'}\n"
-                f"- Thời gian: {state['slot']} {_fmt_date_vn(state['date'])}\n")
-
-    if deposit_amount > 0:
-        from backend.app.services.payment_gateway import create_deposit_payment, payment_url
-        payment = create_deposit_payment(db, appt, deposit_amount)
-        db.commit()
-        return (base_msg +
-                f"Để giữ chỗ chắc chắn, bạn vui lòng đặt cọc {deposit_amount:,.0f}đ "
-                f"(sẽ được trừ vào hóa đơn) qua liên kết:\n{payment_url(payment)}\n"
-                f"Lịch hẹn sẽ tự động XÁC NHẬN ngay khi thanh toán xong. Cảm ơn bạn!")
-
-    return (base_msg +
-            "Lịch hẹn đang ở trạng thái CHỜ XÁC NHẬN. Lễ tân sẽ liên hệ xác nhận với bạn sớm nhất. "
-            "Cảm ơn bạn đã tin tưởng phòng khám!")
+    summary = _say(
+        locale,
+        f"✅ Đã gửi yêu cầu đặt lịch:\n- Họ tên: {state['full_name']} ({state['phone']})\n- Dịch vụ: {service_name}\n- Thời gian mong muốn: {state['slot']} {_fmt_date(state['date'], locale)}\n",
+        f"✅ Booking request sent:\n- Name: {state['full_name']} ({state['phone']})\n- Service: {service_name}\n- Preferred time: {state['slot']} {_fmt_date(state['date'], locale)}\n",
+        f"✅ 予約リクエストを送信しました:\n- お名前: {state['full_name']} ({state['phone']})\n- サービス: {service_name}\n- 希望日時: {_fmt_date(state['date'], locale)} {state['slot']}\n",
+    )
+    return summary + booking_text(locale, "requested")
