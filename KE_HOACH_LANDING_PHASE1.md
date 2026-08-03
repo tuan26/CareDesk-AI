@@ -1,6 +1,7 @@
 # Kế hoạch Phase 1 — Landing Page phân cấp
 
-> Trạng thái: **Giai đoạn A + B đã triển khai xong** (03/08/2026). Giai đoạn C chưa làm.
+> Trạng thái: **Giai đoạn A, B, C đã triển khai xong** (03/08/2026).
+> Phần còn lại là Phase 2/3 trong roadmap, xem cuối README.
 
 ## 1. Quyết định đã chốt
 
@@ -228,6 +229,16 @@ tác**. Không trộn hai loại vào cùng một bước.
 13. Viết script `clinic_to_branch.py` cho khách thật sau này, theo đúng trình tự:
     `backup → tạo Branch → map dữ liệu sang branch_id → VERIFY → merge → archive Clinic cũ`
 14. Clinic cũ **đánh dấu archived trước**, chỉ xoá hẳn sau khi vận hành ổn định
+
+### Kết quả Giai đoạn C (đã chạy 03/08/2026)
+`scripts/clinic_to_branch.py --source 2 --target 1 --branch-name "Cơ sở Bạch Mai" --apply`
+
+- Clinic #2 -> Branch #3 của Clinic #1; clinic cũ archived (is_active=False, fee=0)
+- **8 automation rule trùng bị xoá thay vì chuyển** — nếu chuyển thì mỗi bệnh nhân
+  nhận follow-up 2 lần
+- MRR 2.500.000đ -> 1.500.000đ (hết tính phí trùng)
+- Slug clinic cũ trỏ sang chính cơ sở nó trở thành (301), không link nào chết
+- Slug thương hiệu rút gọn: `chuoi-tham-my-caredesk-group-bcaf8a` -> `caredesk`
 
 ## 10. Rủi ro / điểm cần theo dõi
 

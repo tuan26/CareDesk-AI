@@ -107,19 +107,24 @@ Kết nối DB cấu hình qua `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIM
 backend/app/
   main.py          khởi động: safety checks -> migration -> seed -> scheduler; / , /health
   api/endpoints/   auth, clinic, appointment, chat, webhooks, reports, public, ws,
-                   packages, automations, copilot, platform, org, booking_requests
+                   packages, automations, copilot, platform, org, booking_requests,
+                   landing (SSR /book/*), seo (sitemap.xml, robots.txt)
   services/        ai_engine, booking_flow, events (automation engine), reminder,
                    channel_gateway, payment_gateway, evaluator, public_chat_session,
-                   i18n, rate_limit, audit, ws_manager, tenant_stats, capi
-  core/            config, database, migrate, seed, security, logging_config, slug
+                   landing (resolver slug -> trang), i18n, rate_limit, audit,
+                   ws_manager, tenant_stats, capi
+  core/            config, database, migrate, seed, security, logging_config,
+                   slug (slug_registry: unique toàn cục + 301 slug cũ)
+  templates/       Jinja2: base / brand / branch
   models|schemas   SQLAlchemy models / Pydantic schemas
   alembic/         migration (tự chạy khi khởi động)
 frontend/src/
   pages/           Dashboard, Clinic, Services, Doctors, Appointments, BookingRequests,
                    Inbox, Patients, Packages, Automation, Reports, Settings,
-                   Platform, Org, Chain, ClinicLanding, ClinicChat, Login, Register
+                   Platform, Org, ClinicChat, Login, Register
   api.js           API_BASE / WS_BASE + auth headers      i18n.jsx  đa ngôn ngữ vi/ja/en
 widget/            chat widget nhúng website
+scripts/           clinic_to_branch.py (chuyển Clinic thành Branch)
 tests/             pytest + golden dataset
 docker-compose.yml + backend/Dockerfile + frontend/Dockerfile
 ```
@@ -131,9 +136,17 @@ docker-compose.yml + backend/Dockerfile + frontend/Dockerfile
 | `/` | ✅ | Dashboard phòng khám (sidebar: lịch hẹn, inbox, CRM, gói, báo cáo…) |
 | `/org`, `/org/:slug` | ✅ | Console chuỗi — roll-up nhiều phòng khám |
 | `/platform` | ✅ | Console nhà phát hành — quản lý tenant, gói cước |
-| `/book/:org/:clinic` | ❌ | **Trang phòng khám** — link chuẩn gửi cho khách (tên, địa chỉ, SĐT + nút vào chat) |
-| `/book/:org/:clinic/chat` | ❌ | Chat AI đặt lịch — khách vào từ nút trên trang phòng khám |
-| `/book/:org` | ❌ | Trang chuỗi, khách chọn chi nhánh |
+| `/book/<brand>` | ❌ | **Trang thương hiệu** — link chuẩn gửi cho khách (giới thiệu, danh sách cơ sở, dịch vụ, bác sĩ) |
+| `/book/<brand>/<branch>` | ❌ | Trang riêng của một cơ sở (bật/tắt từng cơ sở) |
+| `/chat/<brand>[/<branch>]` | ❌ | Chat AI đặt lịch, khách vào từ nút trên trang landing |
+| `/sitemap.xml`, `/robots.txt` | ❌ | Cho Google index các trang landing |
 
-Link "Chép" ở console Nhà phát hành / Chuỗi trỏ về **trang phòng khám**, không nhảy thẳng vào chat —
-khách thấy thông tin phòng khám trước rồi mới quyết định trò chuyện.
+`<brand>` là slug của **Organization**; Clinic không xuất hiện trong URL công khai
+(nó là tầng tính tiền), nên tách/gộp Clinic sau này không làm đổi link đã phát.
+
+**`/book/*` do FastAPI render HTML**, không phải SPA — crawler Facebook/Zalo không
+chạy JavaScript nên phải có `<title>`/`og:`/JSON-LD thật trong HTML. nginx và vite
+proxy `/book`, `/sitemap.xml`, `/robots.txt` về backend; mọi đường khác vẫn là SPA.
+
+Mọi URL cũ đều **301**, không cái nào 404: slug clinic, dạng `/book/<org>/<clinic>`,
+slug đã đổi tên, và `/c/<slug>`, `/g/<slug>`.
