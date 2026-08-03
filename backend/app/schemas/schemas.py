@@ -397,6 +397,7 @@ class PlatformClinicUpdate(BaseModel):
     ai_quota_monthly: Optional[int] = None
     monthly_fee: Optional[float] = None
     is_active: Optional[bool] = None
+    landing_enabled: Optional[bool] = None
     organization_id: Optional[int] = None
     trial_ends_at: Optional[datetime] = None
 
@@ -430,6 +431,13 @@ class OrganizationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    is_active: Optional[bool] = None
+    landing_enabled: Optional[bool] = None
+
 
 class AssignClinicToOrg(BaseModel):
     clinic_id: int

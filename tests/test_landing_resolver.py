@@ -108,6 +108,17 @@ def test_retired_slug_redirects_to_current(db, chain):
     assert e.value.location == f"/book/{chain['org'].slug}/bach-mai-co-so-2"
 
 
+def test_retired_brand_slug_keeps_the_branch(db, chain):
+    """/book/<old-brand>/<branch> must land on that branch, not the brand page."""
+    old_brand = chain["org"].slug
+    change_slug(db, chain["org"], "caredesk")
+    db.commit()
+
+    with pytest.raises(Redirect) as e:
+        load_branch(db, old_brand, chain["b1"].slug)
+    assert e.value.location == f"/book/caredesk/{chain['b1'].slug}"
+
+
 def test_inactive_branch_is_hidden_everywhere(db, chain):
     chain["b1"].is_active = False
     db.commit()

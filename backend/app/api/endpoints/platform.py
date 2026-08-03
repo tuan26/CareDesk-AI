@@ -15,6 +15,7 @@ from backend.app.api.deps import get_platform_admin
 from backend.app.models.models import User, Clinic, Organization, Plan
 from backend.app.schemas.schemas import (
     PlatformClinicCreate, PlatformClinicUpdate, OrganizationCreate, OrganizationOut,
+    OrganizationUpdate,
     PlanCreate, PlanUpdate, PlanOut
 )
 from backend.app.services.tenant_stats import clinic_metrics, aggregate
@@ -185,6 +186,8 @@ def update_clinic(
         clinic.trial_ends_at = body.trial_ends_at
     if body.is_active is not None:
         clinic.is_active = body.is_active
+    if body.landing_enabled is not None:
+        clinic.landing_enabled = body.landing_enabled
     if body.organization_id is not None:
         if body.organization_id == 0:
             clinic.organization_id = None
@@ -251,9 +254,41 @@ def list_organizations(
         clinic_count = db.query(Clinic).filter(Clinic.organization_id == o.id).count()
         owner = db.query(User).filter(User.organization_id == o.id, User.role == "org_owner").first()
         out.append({"id": o.id, "name": o.name, "slug": o.slug, "is_active": bool(o.is_active),
+                    "landing_enabled": bool(o.landing_enabled),
                     "clinic_count": clinic_count, "owner_email": owner.email if owner else None,
                     "created_at": o.created_at.isoformat() if o.created_at else None})
     return out
+
+
+@router.patch("/organizations/{org_id}", response_model=OrganizationOut)
+def update_organization(
+    org_id: int,
+    body: OrganizationUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_platform_admin),
+) -> Any:
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(404, "Chuỗi không tồn tại.")
+
+    if body.name is not None:
+        org.name = body.name
+    if body.is_active is not None:
+        org.is_active = body.is_active
+    if body.landing_enabled is not None:
+        org.landing_enabled = body.landing_enabled
+    if body.slug is not None:
+        # Same rule as clinics: renaming leaves the public URL alone, moving it
+        # is explicit and the old slug stays registered for a 301.
+        try:
+            change_slug(db, org, body.slug)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    log_action(db, admin.id, "update_organization", f"Cập nhật chuỗi: {org.name}")
+    db.commit()
+    db.refresh(org)
+    return org
 
 
 @router.post("/organizations", response_model=OrganizationOut)

@@ -219,7 +219,13 @@ def load_brand(db: Session, slug: str) -> BrandView:
 
 def load_branch(db: Session, brand_slug: str, branch_slug: str) -> tuple[BrandView, BranchView]:
     """Resolve /book/<brand>/<branch>, handling the legacy /book/<org>/<clinic> shape."""
-    brand_row = _live_row(db, brand_slug)
+    # Resolve the brand without redirecting on a retired slug: the canonical
+    # check at the end already redirects, and it knows the branch — going
+    # through _live_row here would send /book/<old-brand>/<branch> to the brand
+    # page and silently drop the branch the visitor asked for.
+    brand_row = resolve(db, brand_slug)
+    if brand_row is None or brand_row.entity_type == "reserved":
+        raise NotFound()
     child_row = _live_row(db, branch_slug)
 
     # Legacy URL: second segment used to be the clinic. Send it to the brand page.

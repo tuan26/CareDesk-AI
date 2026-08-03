@@ -139,6 +139,17 @@ export default function PlatformPage() {
     if (ok) setEditClinic(null);
   };
 
+  const patchOrg = async (id, patch, label) => {
+    setErr('');
+    try {
+      const res = await fetch(`${API_BASE}/platform/organizations/${id}`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify(patch) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Cập nhật thất bại');
+      flash(label || 'Đã cập nhật.');
+      await loadAll();
+    } catch (e2) { setErr(e2.message); }
+  };
+
   const createOrg = async (e) => {
     e.preventDefault();
     setBusy(true); setErr('');
@@ -248,6 +259,11 @@ export default function PlatformPage() {
                           onClick={() => patchClinic(c.clinic_id, { is_active: !c.is_active }, c.is_active ? 'Đã tạm ngưng.' : 'Đã mở lại.')}>
                           {c.is_active ? 'Tạm ngưng' : 'Mở lại'}
                         </button>
+                        <button className={`btn btn-sm ${c.landing_enabled ? 'btn-secondary' : 'btn-primary'}`} style={{ fontSize: 10 }}
+                          title="Trang giới thiệu công khai của phòng khám này"
+                          onClick={() => patchClinic(c.clinic_id, { landing_enabled: !c.landing_enabled }, c.landing_enabled ? 'Đã ẩn landing.' : 'Đã hiện landing.')}>
+                          Landing: {c.landing_enabled ? 'Bật' : 'Tắt'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -349,7 +365,7 @@ export default function PlatformPage() {
           <div className="card-table-wrapper" style={{ marginBottom: 0, minWidth: 0, overflowX: 'auto' }}>
             <div className="card-header"><h2>Chuỗi phòng khám ({orgs.length})</h2></div>
             <table className="custom-table">
-              <thead><tr><th>Chuỗi & Link</th><th>Chủ chuỗi</th><th>Số PK</th></tr></thead>
+              <thead><tr><th>Chuỗi & Link</th><th>Chủ chuỗi</th><th>Số PK</th><th>Landing</th></tr></thead>
               <tbody>
                 {orgs.map(o => (
                   <tr key={o.id}>
@@ -359,9 +375,15 @@ export default function PlatformPage() {
                     </td>
                     <td style={{ fontSize: 12 }}>{o.owner_email || '—'}</td>
                     <td><span className="badge confirmed">{o.clinic_count}</span></td>
+                    <td>
+                      <button className={`btn btn-sm ${o.landing_enabled ? 'btn-secondary' : 'btn-primary'}`} style={{ fontSize: 10 }}
+                        onClick={() => patchOrg(o.id, { landing_enabled: !o.landing_enabled }, o.landing_enabled ? 'Đã ẩn landing chuỗi.' : 'Đã hiện landing chuỗi.')}>
+                        {o.landing_enabled ? 'Bật' : 'Tắt'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
-                {orgs.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>Chưa có chuỗi nào.</td></tr>}
+                {orgs.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>Chưa có chuỗi nào.</td></tr>}
               </tbody>
             </table>
           </div>
