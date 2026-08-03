@@ -216,6 +216,11 @@ class Conversation(Base):
     channel = Column(String, default="web")  # web | zalo | facebook
     status = Column(String, default="bot_active")  # bot_active | handoff_requested | agent_active
     locale = Column(String, nullable=True)  # Explicit patient locale; NULL uses Clinic.default_locale
+    # Which location the patient arrived from (/chat/<brand>/<branch>). Without
+    # it the booking flow just took the first doctor with a free slot, so every
+    # conversation ended up booking whichever branch that doctor happened to
+    # work at, no matter which one the patient clicked.
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
     booking_state = Column(JSON, nullable=True)  # AI booking flow state machine
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

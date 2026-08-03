@@ -118,8 +118,14 @@ def clinic_services(db: Session, clinic: Optional[Clinic]) -> List[Service]:
     return db.query(Service).filter(Service.clinic_id == clinic.id).all()
 
 
-def build_clinic_identity(db: Session, clinic: Optional[Clinic]) -> str:
-    """One identity block (name/address/hotline + branches), strictly clinic-scoped."""
+def build_clinic_identity(db: Session, clinic: Optional[Clinic],
+                          branch_id: Optional[int] = None) -> str:
+    """One identity block (name/address/hotline + branches), strictly clinic-scoped.
+
+    When the patient arrived from a specific location, say so up front: otherwise
+    the model answers "địa chỉ ở đâu" by listing every branch, which is the wrong
+    answer for someone who already picked one.
+    """
     if not clinic:
         return "Thông tin phòng khám chưa được cấu hình."
     lines = [f"Tên phòng khám: {clinic.name}."]
@@ -127,14 +133,32 @@ def build_clinic_identity(db: Session, clinic: Optional[Clinic]) -> str:
         lines.append(f"Địa chỉ: {clinic.address}.")
     if clinic.phone:
         lines.append(f"Hotline: {clinic.phone}.")
-    branches = db.query(Branch).filter(Branch.clinic_id == clinic.id).all()
-    for b in branches:
-        hours = f" — giờ làm việc {b.working_hours}" if b.working_hours else ""
-        lines.append(f"- Chi nhánh {b.name}: {b.address}{hours}.")
+
+    chosen = None
+    if branch_id:
+        chosen = db.query(Branch).filter(
+            Branch.id == branch_id, Branch.clinic_id == clinic.id).first()
+    if chosen:
+        hours = f" — giờ làm việc {chosen.working_hours}" if chosen.working_hours else ""
+        phone = f" — điện thoại {chosen.phone}" if chosen.phone else ""
+        lines.append(
+            f"KHÁCH ĐANG HỎI VỀ CƠ SỞ: {chosen.name}: {chosen.address}{hours}{phone}. "
+            f"Hãy trả lời theo cơ sở này và đặt lịch tại đây, trừ khi khách đổi sang cơ sở khác."
+        )
+
+    branches = db.query(Branch).filter(
+        Branch.clinic_id == clinic.id, Branch.is_active == True).all()  # noqa: E712
+    others = [b for b in branches if not chosen or b.id != chosen.id]
+    if others:
+        lines.append("Các cơ sở khác:" if chosen else "Các cơ sở:")
+        for b in others:
+            hours = f" — giờ làm việc {b.working_hours}" if b.working_hours else ""
+            lines.append(f"- {b.name}: {b.address}{hours}.")
     return "\n".join(lines)
 
 
-def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None, locale: str = "vi") -> str:
+def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None, locale: str = "vi",
+                  branch_id: Optional[int] = None) -> str:
     """
     Simple RAG implementation, STRICTLY scoped to one clinic: matches query
     keywords against THIS clinic's services + FAQ. Never reads other tenants' data.
@@ -144,7 +168,7 @@ def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None, loca
 
     # Always give the model the clinic identity (name/address/branch hours) so it
     # can reliably answer "địa chỉ / mấy giờ" even when the query also hits a service.
-    context_chunks = [build_clinic_identity(db, clinic)]  # clinic identity
+    context_chunks = [build_clinic_identity(db, clinic, branch_id)]  # clinic identity
     matched_chunks = []
 
     query_lower = query.lower()
@@ -471,7 +495,8 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     clinic = resolve_clinic(db, conv.clinic_id)
     clinic_name = clinic.name if clinic else "phòng khám"
     locale = locale_for_conversation(conv, clinic)
-    rag_context = query_faq_rag(db, user_message, clinic_id=conv.clinic_id, locale=locale)
+    rag_context = query_faq_rag(db, user_message, clinic_id=conv.clinic_id, locale=locale,
+                                branch_id=conv.branch_id)
 
     # 5. Build System Prompt from THIS clinic's real identity/data (no hardcoded brand)
     system_prompt = f"""Bạn là trợ lý lễ tân ảo AI chuyên nghiệp của '{clinic_name}'.

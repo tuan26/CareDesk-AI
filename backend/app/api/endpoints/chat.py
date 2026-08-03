@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
-from backend.app.models.models import Conversation, Message, PatientLead, User, Clinic
+from backend.app.models.models import Conversation, Message, PatientLead, User, Clinic, Branch
 from backend.app.schemas.schemas import (
     ConversationOut, MessageOut, MessageBase, ConversationStatusUpdate, PatientLeadCreate
 )
@@ -104,9 +104,21 @@ def start_conversation(
         patient.consent_timestamp = datetime.utcnow()
         db.commit()
 
+    # Pin the location the patient arrived from, so the booking flow proposes
+    # slots at that branch instead of the first doctor it happens to find.
+    branch_id = None
+    if lead_in.branch_id:
+        branch = db.query(Branch).filter(
+            Branch.id == lead_in.branch_id,
+            Branch.clinic_id == clinic_id,      # never accept another tenant's branch
+            Branch.is_active == True,           # noqa: E712
+        ).first()
+        branch_id = branch.id if branch else None
+
         # Create new conversation
     conv = Conversation(
         clinic_id=clinic_id,
+        branch_id=branch_id,
         patient_id=patient.id,
         channel=lead_in.source,
         status="bot_active",

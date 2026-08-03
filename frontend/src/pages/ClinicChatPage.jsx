@@ -3,9 +3,9 @@ import { useParams } from 'react-router-dom';
 import { API_BASE } from '../api';
 
 const COPY = {
-  vi: { intro: 'Để lại thông tin để bắt đầu trò chuyện với trợ lý ảo:', name: 'Họ và tên', phone: 'Số điện thoại', consent: 'Tôi đồng ý cho phòng khám lưu thông tin để tư vấn.', start: 'Bắt đầu trò chuyện', welcome: 'Xin chào {name}! Mình là trợ lý ảo của {clinic}. Bạn cần hỗ trợ gì ạ?', connection: 'Xin lỗi, kết nối gặp sự cố. Bạn thử lại giúp nhé.', replying: 'Đang trả lời...', input: 'Nhập tin nhắn...', send: 'Gửi' },
-  en: { intro: 'Leave your details to start a conversation with our virtual assistant:', name: 'Full name', phone: 'Phone number', consent: 'I consent to the clinic storing my details for consultation.', start: 'Start chat', welcome: 'Hello {name}! I am the virtual assistant for {clinic}. How can I help?', connection: 'Sorry, the connection failed. Please try again.', replying: 'Replying...', input: 'Type a message...', send: 'Send' },
-  ja: { intro: 'バーチャルアシスタントとの会話を始めるために、情報を入力してください。', name: 'お名前', phone: '電話番号', consent: '相談のため、クリニックが私の情報を保存することに同意します。', start: 'チャットを開始', welcome: '{name}様、こんにちは。{clinic}のバーチャルアシスタントです。どのようにお手伝いできますか？', connection: '接続に失敗しました。もう一度お試しください。', replying: '返信中...', input: 'メッセージを入力...', send: '送信' },
+  vi: { intro: 'Để lại thông tin để bắt đầu trò chuyện với trợ lý ảo:', name: 'Họ và tên', phone: 'Số điện thoại', consent: 'Tôi đồng ý cho phòng khám lưu thông tin để tư vấn.', start: 'Bắt đầu trò chuyện', welcome: 'Xin chào {name}! Mình là trợ lý ảo của {clinic}. Bạn cần hỗ trợ gì ạ?', connection: 'Xin lỗi, kết nối gặp sự cố. Bạn thử lại giúp nhé.', replying: 'Đang trả lời...', input: 'Nhập tin nhắn...', send: 'Gửi', branch: 'Cơ sở bạn muốn đến', branchAny: '— Để phòng khám tư vấn giúp —', branchFull: 'chưa nhận đặt lịch online' },
+  en: { intro: 'Leave your details to start a conversation with our virtual assistant:', name: 'Full name', phone: 'Phone number', consent: 'I consent to the clinic storing my details for consultation.', start: 'Start chat', welcome: 'Hello {name}! I am the virtual assistant for {clinic}. How can I help?', connection: 'Sorry, the connection failed. Please try again.', replying: 'Replying...', input: 'Type a message...', send: 'Send', branch: 'Which location?', branchAny: '— Let the clinic advise me —', branchFull: 'online booking unavailable' },
+  ja: { intro: 'バーチャルアシスタントとの会話を始めるために、情報を入力してください。', name: 'お名前', phone: '電話番号', consent: '相談のため、クリニックが私の情報を保存することに同意します。', start: 'チャットを開始', welcome: '{name}様、こんにちは。{clinic}のバーチャルアシスタントです。どのようにお手伝いできますか？', connection: '接続に失敗しました。もう一度お試しください。', replying: '返信中...', input: 'メッセージを入力...', send: '送信', branch: 'ご希望の店舗', branchAny: '— クリニックに相談する —', branchFull: 'オンライン予約不可' },
 };
 
 /**
@@ -29,6 +29,9 @@ export default function ClinicChatPage() {
   const t = (key, values = {}) => (COPY[locale]?.[key] || COPY.en[key] || key).replace(/\{(\w+)\}/g, (_, name) => values[name] || '');
   const [notFound, setNotFound] = useState(false);
   const [lead, setLead] = useState({ full_name: '', phone: '', consent: false });
+  // Which location the booking is for. Preselected when the URL named one
+  // (/chat/<brand>/<branch>), otherwise the patient chooses before starting.
+  const [branchId, setBranchId] = useState('');
   const [convId, setConvId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -43,6 +46,7 @@ export default function ClinicChatPage() {
         if (!res.ok) { setNotFound(true); return; }
         const data = await res.json();
         setClinic(data);
+        setBranchId(data.branch?.id ? String(data.branch.id) : '');
         setLocale(COPY[data.default_locale] ? data.default_locale : 'vi');
       } catch { setNotFound(true); }
     })();
@@ -60,6 +64,7 @@ export default function ClinicChatPage() {
         body: JSON.stringify({
           full_name: lead.full_name, phone: lead.phone, source: 'web',
           consent_given: true, clinic_id: clinic.clinic_id, locale,
+          branch_id: branchId ? Number(branchId) : null,
         }),
       });
       const data = await res.json();
@@ -108,7 +113,15 @@ export default function ClinicChatPage() {
             : <div style={{ ...sx.logo, ...sx.logoFallback }}>{clinic.name.slice(0, 1)}</div>}
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>{clinic.name}</div>
-            {clinic.address && <div style={{ fontSize: 12, opacity: 0.85 }}>{clinic.address}</div>}
+            {(() => {
+              // Show the location actually being booked, so the patient can see
+              // at a glance they landed on the one they clicked.
+              const picked = clinic.branches?.find(b => String(b.id) === String(branchId));
+              const line = picked
+                ? `${picked.name}${picked.address ? ` — ${picked.address}` : ''}`
+                : clinic.address;
+              return line ? <div style={{ fontSize: 12, opacity: 0.85 }}>{line}</div> : null;
+            })()}
           </div>
           <select aria-label="Language" value={locale} onChange={(e) => setLocale(e.target.value)} style={{ marginLeft: 'auto' }}><option value="vi">VI</option><option value="en">EN</option><option value="ja">JA</option></select>
         </div>
@@ -122,6 +135,19 @@ export default function ClinicChatPage() {
               onChange={e => setLead({ ...lead, full_name: e.target.value })} required />
             <input style={sx.input} placeholder={t('phone')} value={lead.phone}
               onChange={e => setLead({ ...lead, phone: e.target.value })} required />
+            {clinic.branches?.length > 1 && (
+              <label style={{ fontSize: 12, color: '#64748b', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {t('branch')}
+                <select style={sx.input} value={branchId} onChange={e => setBranchId(e.target.value)}>
+                  <option value="">{t('branchAny')}</option>
+                  {clinic.branches.map(b => (
+                    <option key={b.id} value={b.id} disabled={!b.bookable}>
+                      {b.name}{b.address ? ` — ${b.address}` : ''}{b.bookable ? '' : ` (${t('branchFull')})`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#475569' }}>
               <input type="checkbox" checked={lead.consent}
                 onChange={e => setLead({ ...lead, consent: e.target.checked })} />

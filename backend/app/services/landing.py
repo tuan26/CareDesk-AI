@@ -61,6 +61,7 @@ class BrandView:
     address: Optional[str]
     phone: Optional[str]
     clinic_ids: list[int]
+    default_locale: str = "vi"
     branches: list[BranchView] = field(default_factory=list)
     services: list[Service] = field(default_factory=list)
     doctors: list[Doctor] = field(default_factory=list)
@@ -167,6 +168,7 @@ def _build_brand(db: Session, *, org: Organization | None, clinics: list[Clinic]
         ),
         address=primary.address,
         phone=primary.phone,
+        default_locale=primary.default_locale or "vi",
         clinic_ids=clinic_ids,
         branches=[
             BranchView(

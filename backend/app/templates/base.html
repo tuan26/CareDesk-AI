@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi">
+<html lang="{{ locale }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,6 +9,14 @@
 <title>{{ page_title }}</title>
 <meta name="description" content="{{ page_description }}">
 <link rel="canonical" href="{{ base_url }}{{ canonical_path }}">
+
+{# Tell Google the same page exists in other languages instead of letting it
+   treat them as duplicates. x-default is the clinic's own language. #}
+{% for lc in locales %}
+<link rel="alternate" hreflang="{{ lc }}" href="{{ base_url }}{{ canonical_path }}?lang={{ lc }}">
+{% endfor %}
+<link rel="alternate" hreflang="x-default" href="{{ base_url }}{{ canonical_path }}">
+<meta property="og:locale" content="{{ locale }}">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="{{ brand.name }}">
@@ -36,6 +44,9 @@ header.hero .wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
 h1{margin:0 0 6px;font-size:26px}
 .sub{color:rgba(255,255,255,.78);font-size:14px;margin:2px 0}
 .cta-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;width:100%}
+.langs{margin-left:auto;align-self:flex-start;display:flex;gap:4px}
+.lang{padding:5px 10px;border-radius:7px;font-size:12.5px;font-weight:600;text-decoration:none;color:rgba(255,255,255,.75);border:1px solid rgba(255,255,255,.28)}
+.lang.on{background:#fff;color:#0f172a;border-color:#fff}
 .btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px;text-decoration:none;background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff}
 .btn.ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28)}
 section{padding:34px 0;border-bottom:1px solid var(--line)}
@@ -67,12 +78,19 @@ footer{padding:26px 0 44px;color:var(--muted);font-size:12.5px;text-align:center
       <h1>{{ heading }}</h1>
       {% block hero_meta %}{% endblock %}
     </div>
+    <nav class="langs" aria-label="Language">
+      {% for lc in locales %}
+      <a href="{{ canonical_path }}?lang={{ lc }}"
+         class="lang{% if lc == locale %} on{% endif %}"
+         hreflang="{{ lc }}" rel="alternate">{{ lc | upper }}</a>
+      {% endfor %}
+    </nav>
     <div class="cta-row">{% block hero_cta %}{% endblock %}</div>
   </div>
 </header>
 
 <main class="wrap">{% block content %}{% endblock %}</main>
 
-<footer>Được vận hành bởi CareDesk AI</footer>
+<footer>{{ t('powered') }}</footer>
 </body>
 </html>

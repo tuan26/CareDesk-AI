@@ -128,8 +128,30 @@ def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str, loc
     return best if best_hits >= 2 else None
 
 
-def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: date, duration: int):
-    """Find an active doctor with free slots on the date. Returns (doctor, branch, slots)."""
+def _branch_ever_open(db: Session, branch_id: int) -> bool:
+    """Does this location have any working schedule at all?"""
+    return db.query(WorkingSchedule).filter(
+        WorkingSchedule.branch_id == branch_id
+    ).first() is not None
+
+
+def _other_open_branches(db: Session, clinic_id: Optional[int], exclude_id: int) -> list:
+    """Sibling locations that can actually take a booking."""
+    query = db.query(Branch).filter(Branch.id != exclude_id, Branch.is_active == True)  # noqa: E712
+    if clinic_id:
+        query = query.filter(Branch.clinic_id == clinic_id)
+    return [b for b in query.all() if _branch_ever_open(db, b.id)]
+
+
+def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: date,
+                           duration: int, branch_id: Optional[int] = None):
+    """Find an active doctor with free slots on the date. Returns (doctor, branch, slots).
+
+    `branch_id` pins the search to the location the patient actually chose. Left
+    unset this scans every doctor in the clinic and returns the first with a free
+    slot, which is why a patient who clicked "Cơ sở Bạch Mai" used to be booked
+    into whatever branch the first available doctor worked at.
+    """
     from backend.app.services.ai_engine import get_available_slots
 
     weekday = target_date.weekday()
@@ -137,15 +159,21 @@ def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: d
     if clinic_id:
         query = query.filter(Doctor.clinic_id == clinic_id)
     for doctor in query.all():
-        has_schedule = db.query(WorkingSchedule).filter(
+        schedules = db.query(WorkingSchedule).filter(
             WorkingSchedule.doctor_id == doctor.id,
             WorkingSchedule.day_of_week == weekday
-        ).first()
+        )
+        if branch_id:
+            # A doctor may work different days at different branches, so filter
+            # the schedule too rather than trusting doctor.branch_id alone.
+            schedules = schedules.filter(WorkingSchedule.branch_id == branch_id)
+        has_schedule = schedules.first()
         if not has_schedule:
             continue
         slots = get_available_slots(db, doctor.id, target_date, duration)
         if slots:
-            branch = db.query(Branch).filter(Branch.id == (doctor.branch_id or has_schedule.branch_id)).first()
+            resolved = branch_id or doctor.branch_id or has_schedule.branch_id
+            branch = db.query(Branch).filter(Branch.id == resolved).first()
             return doctor, branch, [s.strftime("%H:%M") for s in slots]
     return None, None, []
 
@@ -290,7 +318,28 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
 
     # Need proposed slots
     if not state.get("slot"):
-        doctor, branch, slots = _pick_doctor_and_slots(db, conv.clinic_id, target_date, service.duration_minutes)
+        doctor, branch, slots = _pick_doctor_and_slots(
+            db, conv.clinic_id, target_date, service.duration_minutes,
+            branch_id=conv.branch_id,  # honour the location the patient arrived from
+        )
+        if not slots and conv.branch_id and not _branch_ever_open(db, conv.branch_id):
+            # The pinned location has no working schedule at all, so no date will
+            # ever produce a slot. Say so and unpin, instead of looping the
+            # patient through "fully booked" forever.
+            other = _other_open_branches(db, conv.clinic_id, conv.branch_id)
+            conv.branch_id = None
+            state.pop("date", None)
+            state.pop("proposed_slots", None)
+            conv.booking_state = state
+            db.commit()
+            if other:
+                names = ", ".join(b.name for b in other)
+                return (f"Cơ sở bạn chọn hiện chưa mở lịch khám trực tuyến ạ. "
+                        f"Các cơ sở đang nhận lịch: {names}. "
+                        f"Bạn muốn đặt tại cơ sở nào ạ?")
+            return ("Hiện phòng khám chưa mở lịch khám trực tuyến cho cơ sở này ạ. "
+                    "Bạn vui lòng để lại số điện thoại, lễ tân sẽ gọi lại sắp xếp giúp bạn nhé.")
+
         if not slots:
             state["waitlist_offered"] = True
             state["waitlist_date"] = state.get("date")

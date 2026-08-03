@@ -3,19 +3,19 @@
 {% block hero_meta %}
   {% if brand.address %}<p class="sub">📍 {{ brand.address }}</p>{% endif %}
   {% if brand.phone %}<p class="sub">☎ <a href="tel:{{ brand.phone }}">{{ brand.phone }}</a></p>{% endif %}
-  {% if brand.branches %}<p class="sub">{{ brand.branches | length }} cơ sở</p>{% endif %}
+  {% if brand.branches %}<p class="sub">{{ t('branch_count', n=brand.branches | length) }}</p>{% endif %}
 {% endblock %}
 
 {% block hero_cta %}
-  <a class="btn" href="{{ chat_href }}">💬 Đặt lịch với trợ lý ảo</a>
-  {% if brand.phone %}<a class="btn ghost" href="tel:{{ brand.phone }}">Gọi hotline</a>{% endif %}
+  <a class="btn" href="{{ chat_href }}">💬 {{ t('book_cta') }}</a>
+  {% if brand.phone %}<a class="btn ghost" href="tel:{{ brand.phone }}">{{ t('call') }}</a>{% endif %}
 {% endblock %}
 
 {% block content %}
 
 {% if brand.branches %}
 <section>
-  <h2>Các cơ sở</h2>
+  <h2>{{ t('locations') }}</h2>
   <div class="grid">
     {% for b in brand.branches %}
     <div class="card">
@@ -24,9 +24,10 @@
       {% if b.working_hours %}<p class="meta">🕐 {{ b.working_hours }}</p>{% endif %}
       {% if b.phone %}<p class="meta">☎ <a href="tel:{{ b.phone }}">{{ b.phone }}</a></p>{% endif %}
       <div class="actions">
-        <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">Đặt lịch cơ sở này</a>
+        {# Each card links to ITS OWN branch, and the chat pins that location. #}
+        <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">{{ t('book_here') }}</a>
         {% if b.landing_enabled %}
-          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}">Xem chi tiết</a>
+          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>
         {% endif %}
       </div>
     </div>
@@ -37,15 +38,16 @@
 
 {% if brand.services %}
 <section>
-  <h2>Dịch vụ &amp; bảng giá</h2>
+  <h2>{{ t('services') }}</h2>
   <div class="grid">
     {% for s in brand.services %}
+    {% set c = svc(s) %}
     <div class="card">
       <div class="row">
         <div style="flex:1;min-width:220px">
-          <h3>{{ s.name }}</h3>
-          {% if s.description %}<p class="meta">{{ s.description }}</p>{% endif %}
-          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} phút</p>{% endif %}
+          <h3>{{ c.name or s.name }}</h3>
+          {% if c.description or s.description %}<p class="meta">{{ c.description or s.description }}</p>{% endif %}
+          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} {{ t('minutes') }}</p>{% endif %}
         </div>
         <div class="price">{{ "{:,.0f}".format(s.price) }}đ</div>
       </div>
@@ -57,7 +59,7 @@
 
 {% if brand.doctors %}
 <section>
-  <h2>Đội ngũ bác sĩ</h2>
+  <h2>{{ t('doctors') }}</h2>
   <div class="grid">
     {% for d in brand.doctors %}
     <div class="card">
@@ -70,9 +72,9 @@
 {% endif %}
 
 <section>
-  <h2>Đặt lịch khám</h2>
-  <p class="meta">Trò chuyện với trợ lý ảo để được tư vấn dịch vụ và giữ chỗ khung giờ phù hợp.</p>
-  <div class="actions"><a class="btn" href="{{ chat_href }}">💬 Bắt đầu đặt lịch</a></div>
+  <h2>{{ t('book_title') }}</h2>
+  <p class="meta">{{ t('book_body') }}</p>
+  <div class="actions"><a class="btn" href="{{ chat_href }}">💬 {{ t('book_start') }}</a></div>
 </section>
 
 {% endblock %}

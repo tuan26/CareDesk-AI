@@ -164,6 +164,7 @@ class PatientLeadBase(BaseModel):
 
 class PatientLeadCreate(PatientLeadBase):
     clinic_id: Optional[int] = None
+    branch_id: Optional[int] = None  # location the patient came from / picked
     locale: Optional[str] = None
     referral_code_used: Optional[str] = None  # friend's code entered at signup
 
@@ -403,6 +404,16 @@ class PlatformClinicUpdate(BaseModel):
 
 
 # ===== Public (slug resolution for per-clinic links) =====
+class PublicBranchOut(BaseModel):
+    id: int
+    slug: Optional[str] = None
+    name: str
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    working_hours: Optional[str] = None
+    bookable: bool = True  # False = no working schedule, cannot take a booking
+
+
 class PublicClinicOut(BaseModel):
     clinic_id: int
     slug: Optional[str] = None
@@ -413,6 +424,10 @@ class PublicClinicOut(BaseModel):
     is_active: bool = True
     default_locale: str = "vi"
     public_chat_v1_enabled: bool = False
+    # The location the public URL pointed at, plus every location the patient
+    # may pick when the URL named none.
+    branch: Optional[PublicBranchOut] = None
+    branches: list[PublicBranchOut] = []
 
 
 # ===== Organization (chain) =====

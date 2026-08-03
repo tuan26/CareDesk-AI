@@ -100,6 +100,70 @@ def ui_text(locale: str, key: str, **values: Any) -> str:
     return text.format(**values)
 
 
+# Server-rendered landing pages (/book/*). Kept apart from UI_TEXT because these
+# strings are also what crawlers index, not just what a widget shows.
+LANDING_TEXT = {
+    "vi": {
+        "book_cta": "Đặt lịch với trợ lý ảo", "call": "Gọi hotline",
+        "locations": "Các cơ sở", "services": "Dịch vụ & bảng giá",
+        "doctors": "Đội ngũ bác sĩ", "book_here": "Đặt lịch cơ sở này",
+        "details": "Xem chi tiết", "book_title": "Đặt lịch khám",
+        "book_body": "Trò chuyện với trợ lý ảo để được tư vấn dịch vụ và giữ chỗ khung giờ phù hợp.",
+        "book_start": "Bắt đầu đặt lịch", "hours": "Giờ làm việc",
+        "branch_info": "Thông tin cơ sở", "directions": "Chỉ đường",
+        "book_at_branch": "Đặt lịch tại cơ sở này", "call_branch": "Gọi cơ sở",
+        "other_branches": "Cơ sở khác", "back_to": "Về trang {name}",
+        "minutes": "phút", "branch_count": "{n} cơ sở",
+        "meta_desc": "{name}{where}. {branches} cơ sở, {services} dịch vụ. Đặt lịch khám trực tuyến với trợ lý ảo 24/7.",
+        "meta_branch_desc": "{brand} — cơ sở {name}, {address}. {hours}Đặt lịch khám trực tuyến với trợ lý ảo 24/7.",
+        "meta_hours": "Giờ làm việc {hours}. ", "title_suffix": "Đặt lịch khám",
+        "powered": "Được vận hành bởi CareDesk AI", "not_found": "Không tìm thấy trang",
+        "not_found_body": "Phòng khám hoặc cơ sở này không tồn tại, đã đổi liên kết hoặc đang tạm ngưng.",
+    },
+    "en": {
+        "book_cta": "Book with the virtual assistant", "call": "Call hotline",
+        "locations": "Locations", "services": "Services & pricing",
+        "doctors": "Our doctors", "book_here": "Book at this location",
+        "details": "View details", "book_title": "Book an appointment",
+        "book_body": "Chat with our virtual assistant for advice and to hold a time slot.",
+        "book_start": "Start booking", "hours": "Opening hours",
+        "branch_info": "Location details", "directions": "Directions",
+        "book_at_branch": "Book at this location", "call_branch": "Call this location",
+        "other_branches": "Other locations", "back_to": "Back to {name}",
+        "minutes": "min", "branch_count": "{n} locations",
+        "meta_desc": "{name}{where}. {branches} locations, {services} services. Book online with our 24/7 virtual assistant.",
+        "meta_branch_desc": "{brand} — {name}, {address}. {hours}Book online with our 24/7 virtual assistant.",
+        "meta_hours": "Open {hours}. ", "title_suffix": "Book an appointment",
+        "powered": "Powered by CareDesk AI", "not_found": "Page not found",
+        "not_found_body": "This clinic or location does not exist, has moved, or is temporarily unavailable.",
+    },
+    "ja": {
+        "book_cta": "バーチャルアシスタントで予約", "call": "ホットラインに電話",
+        "locations": "店舗一覧", "services": "サービスと料金",
+        "doctors": "医師紹介", "book_here": "この店舗を予約",
+        "details": "詳細を見る", "book_title": "診察を予約する",
+        "book_body": "バーチャルアシスタントに相談し、ご希望の時間を確保できます。",
+        "book_start": "予約を開始", "hours": "営業時間",
+        "branch_info": "店舗情報", "directions": "道順",
+        "book_at_branch": "この店舗を予約", "call_branch": "この店舗に電話",
+        "other_branches": "他の店舗", "back_to": "{name}に戻る",
+        "minutes": "分", "branch_count": "{n}店舗",
+        "meta_desc": "{name}{where}。{branches}店舗、{services}サービス。24時間対応のバーチャルアシスタントでオンライン予約。",
+        "meta_branch_desc": "{brand} — {name}、{address}。{hours}24時間対応のバーチャルアシスタントでオンライン予約。",
+        "meta_hours": "営業時間 {hours}。", "title_suffix": "診察予約",
+        "powered": "CareDesk AI 提供", "not_found": "ページが見つかりません",
+        "not_found_body": "このクリニックまたは店舗は存在しないか、リンクが変更されたか、一時的に利用できません。",
+    },
+}
+
+
+def landing_text(locale: str, key: str, **values: Any) -> str:
+    """Localized landing-page copy with English as the safe final fallback."""
+    table = LANDING_TEXT.get(normalize_locale(locale), LANDING_TEXT["en"])
+    text = table.get(key, LANDING_TEXT["en"].get(key, key))
+    return text.format(**values) if values else text
+
+
 def locale_for_conversation(conversation: Any, clinic: Optional[Any]) -> str:
     return normalize_locale(
         getattr(conversation, "locale", None), getattr(clinic, "default_locale", "vi") if clinic else "vi"

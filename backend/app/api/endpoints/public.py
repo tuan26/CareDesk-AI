@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.models.models import Appointment, Clinic, Organization
-from backend.app.schemas.schemas import PublicClinicOut
+from backend.app.schemas.schemas import PublicBranchOut, PublicClinicOut
 from backend.app.services.reminder import verify_public_token
 from backend.app.services.rate_limit import public_rate_limiter
 from backend.app.services.audit import log_action
@@ -26,7 +26,26 @@ def clinic_by_slug(slug: str, db: Session = Depends(get_db)):
     clinic = db.query(Clinic).filter(Clinic.slug == slug).first()
     if not clinic:
         raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+
+    def _view(b: Branch) -> PublicBranchOut:
+        # A location with no working schedule can be shown but not booked, so the
+        # UI can grey it out instead of letting a patient walk into a dead end.
+        bookable = db.query(WorkingSchedule).filter(
+            WorkingSchedule.branch_id == b.id).first() is not None
+        return PublicBranchOut(
+            id=b.id, slug=b.slug, name=b.name, address=b.address,
+            phone=b.phone, working_hours=b.working_hours, bookable=bookable,
+        )
+
+    siblings = (
+        db.query(Branch)
+        .filter(Branch.clinic_id == clinic.id, Branch.is_active == True)  # noqa: E712
+        .order_by(Branch.id)
+        .all()
+    )
     return PublicClinicOut(
+        branch=_view(chosen) if chosen else None,
+        branches=[_view(b) for b in siblings],
         clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
         address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
     )
@@ -63,15 +82,17 @@ def resolve_public_chat_target(brand_slug: str, branch_slug: str | None = None,
     translated here. With a branch the mapping is exact; without one we fall
     back to the brand's first active clinic.
     """
-    from backend.app.models.models import Branch, SlugRegistry
+    from backend.app.models.models import Branch, WorkingSchedule
     from backend.app.core.slug import resolve as resolve_slug
 
     clinic = None
+    chosen: Branch | None = None
     if branch_slug:
         row = resolve_slug(db, branch_slug)
         if row and row.entity_type == "branch" and row.is_active:
             branch = db.query(Branch).filter(Branch.id == row.entity_id).first()
-            if branch:
+            if branch and branch.is_active:
+                chosen = branch
                 clinic = db.query(Clinic).filter(Clinic.id == branch.clinic_id).first()
 
     if clinic is None:
@@ -91,11 +112,31 @@ def resolve_public_chat_target(brand_slug: str, branch_slug: str | None = None,
 
     if not clinic:
         raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+
+    def _view(b: Branch) -> PublicBranchOut:
+        # A location with no working schedule can be listed but not booked, so
+        # the picker can disable it instead of letting a patient walk into a
+        # conversation that can never produce a slot.
+        bookable = db.query(WorkingSchedule).filter(
+            WorkingSchedule.branch_id == b.id).first() is not None
+        return PublicBranchOut(
+            id=b.id, slug=b.slug, name=b.name, address=b.address,
+            phone=b.phone, working_hours=b.working_hours, bookable=bookable,
+        )
+
+    siblings = (
+        db.query(Branch)
+        .filter(Branch.clinic_id == clinic.id, Branch.is_active == True)  # noqa: E712
+        .order_by(Branch.id)
+        .all()
+    )
     return PublicClinicOut(
         clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
         address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
         default_locale=clinic.default_locale or "vi",
         public_chat_v1_enabled=bool(clinic.public_chat_v1_enabled),
+        branch=_view(chosen) if chosen else None,
+        branches=[_view(b) for b in siblings],
     )
 
 

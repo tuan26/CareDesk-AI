@@ -21,6 +21,7 @@ from backend.app.services.landing import (
     BrandView, BranchView, NotFound, Redirect, branch_url, brand_url, chat_url,
     load_branch, load_brand,
 )
+from backend.app.services.i18n import SUPPORTED_LOCALES, landing_text, normalize_locale, service_content
 from backend.app.services.rate_limit import landing_rate_limiter
 
 router = APIRouter()
@@ -34,6 +35,26 @@ _CACHE_HEADER = "public, max-age=300"
 
 def _abs(path: str) -> str:
     return f"{settings.PUBLIC_BASE_URL.rstrip('/')}{path}"
+
+
+def _pick_locale(request: Request, default: str) -> str:
+    """?lang= wins, then a previous choice, then the clinic default.
+
+    The query parameter is what a shared link carries and what hreflang points
+    at, so it has to beat the cookie - otherwise sending someone the English URL
+    would still show them Vietnamese.
+    """
+    q = request.query_params.get("lang")
+    if q and normalize_locale(q, default) == q.lower():
+        return q.lower()
+    return normalize_locale(request.cookies.get("caredesk_lang"), default)
+
+
+def _localized(response, locale: str):
+    """Remember the visitor's language for the next page they open."""
+    response.set_cookie("caredesk_lang", locale, max_age=60 * 60 * 24 * 365,
+                        samesite="lax", httponly=False)
+    return response
 
 
 def _not_found() -> HTMLResponse:
@@ -116,27 +137,32 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
     except NotFound:
         return _not_found()
 
+    locale = _pick_locale(request, brand.default_locale)
     path = brand_url(brand.slug)
-    where = f" tại {brand.address}" if brand.address else ""
-    desc = _clean(
-        f"{brand.name}{where}. "
-        f"{len(brand.branches)} cơ sở, {len(brand.services)} dịch vụ. "
-        "Đặt lịch khám trực tuyến với trợ lý ảo 24/7."
-    )
-    return templates.TemplateResponse(
+    where = f" — {brand.address}" if brand.address else ""
+    desc = _clean(landing_text(
+        locale, "meta_desc", name=brand.name, where=where,
+        branches=len(brand.branches), services=len(brand.services),
+    ))
+    response = templates.TemplateResponse(
         request, "brand.html",
         {
             "brand": brand,
             "heading": brand.name,
-            "page_title": f"{brand.name} — Đặt lịch khám",
+            "page_title": f"{brand.name} — {landing_text(locale, 'title_suffix')}",
             "page_description": desc,
             "canonical_path": path,
             "base_url": settings.PUBLIC_BASE_URL.rstrip("/"),
             "chat_href": chat_url(brand.slug),
             "json_ld": _brand_json_ld(brand, path),
+            "locale": locale,
+            "locales": sorted(SUPPORTED_LOCALES),
+            "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "svc": lambda s: service_content(s, locale),
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )
+    return _localized(response, locale)
 
 
 @router.get("/{brand_slug}/{branch_slug}", response_class=HTMLResponse,
@@ -150,13 +176,14 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
     except NotFound:
         return _not_found()
 
+    locale = _pick_locale(request, brand.default_locale)
     path = branch_url(brand.slug, branch.slug)
-    desc = _clean(
-        f"{brand.name} — cơ sở {branch.name}, {branch.address}. "
-        + (f"Giờ làm việc {branch.working_hours}. " if branch.working_hours else "")
-        + "Đặt lịch khám trực tuyến với trợ lý ảo 24/7."
-    )
-    return templates.TemplateResponse(
+    hours = landing_text(locale, "meta_hours", hours=branch.working_hours) if branch.working_hours else ""
+    desc = _clean(landing_text(
+        locale, "meta_branch_desc", brand=brand.name, name=branch.name,
+        address=branch.address, hours=hours,
+    ))
+    response = templates.TemplateResponse(
         request, "branch.html",
         {
             "brand": brand,
@@ -168,6 +195,11 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
             "base_url": settings.PUBLIC_BASE_URL.rstrip("/"),
             "chat_href": chat_url(brand.slug, branch.slug),
             "json_ld": _branch_json_ld(brand, branch, path),
+            "locale": locale,
+            "locales": sorted(SUPPORTED_LOCALES),
+            "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "svc": lambda s: service_content(s, locale),
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )
+    return _localized(response, locale)
