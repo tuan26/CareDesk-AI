@@ -1,0 +1,37 @@
+# Fly.io alternative to render.yaml. Create the app and a Postgres first:
+#   fly launch --no-deploy --dockerfile backend/Dockerfile
+#   fly postgres create && fly postgres attach <db-name>   # sets DATABASE_URL
+#   fly secrets set SECRET_KEY=... PUBLIC_BASE_URL=... BACKEND_CORS_ORIGINS=... OPENAI_API_KEY=...
+#   fly deploy
+app = "caredesk-api"
+primary_region = "sin"          # Singapore: closest Fly region to Vietnam
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[env]
+  ENVIRONMENT = "production"
+  SEED_DEMO_DATA = "false"
+  WEB_CONCURRENCY = "1"
+  DB_POOL_SIZE = "20"
+  DB_MAX_OVERFLOW = "20"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false    # the reminder scheduler must keep running
+  auto_start_machines = true
+  # One machine only: the scheduler and rate limiter are in-memory, so a second
+  # instance sends every reminder twice and splits the rate-limit counters.
+  min_machines_running = 1
+
+  [http_service.checks]
+    [[http_service.checks.http]]
+      path = "/health"
+      interval = "30s"
+      timeout = "5s"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

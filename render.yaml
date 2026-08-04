@@ -1,0 +1,50 @@
+# Render blueprint — backend + Postgres. The frontend goes to Vercel separately
+# (see frontend/vercel.json and TRIEN_KHAI.md).
+#
+# Railway needs no file: point it at this repo, set Dockerfile path to
+# backend/Dockerfile, and copy the same env vars.
+services:
+  - type: web
+    name: caredesk-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .          # the app imports itself as backend.app.*, so build from the repo root
+    plan: starter             # free instances sleep; the reminder scheduler stops while asleep
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: SECRET_KEY
+        generateValue: true   # Render generates once and keeps it; rotating it logs everyone out
+      - key: DATABASE_URL
+        fromDatabase:
+          name: caredesk-db
+          property: connectionString
+      # Must be the PUBLIC domain patients see (the Vercel one), because
+      # canonical, og:url and sitemap.xml are all built from it.
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Comma-separated. The app refuses to boot with "*" in production.
+      - key: BACKEND_CORS_ORIGINS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PLATFORM_ADMIN_EMAIL
+        sync: false
+      - key: PLATFORM_ADMIN_PASSWORD
+        sync: false
+      - key: SEED_DEMO_DATA
+        value: "false"
+      # One process only: the reminder scheduler and the rate limiter keep their
+      # state in memory, so a second worker duplicates every reminder and digest.
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: DB_POOL_SIZE
+        value: "20"
+      - key: DB_MAX_OVERFLOW
+        value: "20"
+
+databases:
+  - name: caredesk-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"

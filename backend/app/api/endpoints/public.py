@@ -7,7 +7,9 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
-from backend.app.models.models import Appointment, Clinic, Organization
+from backend.app.models.models import (
+    Appointment, Branch, Clinic, Organization, WorkingSchedule,
+)
 from backend.app.schemas.schemas import PublicBranchOut, PublicClinicOut
 from backend.app.services.reminder import verify_public_token
 from backend.app.services.rate_limit import public_rate_limiter
@@ -19,6 +21,28 @@ router = APIRouter()
 
 # ---------- Per-clinic / per-chain public link resolution (slug -> tenant) ----------
 
+def _branch_view(db: Session, b: Branch) -> PublicBranchOut:
+    """A location with no working schedule can be listed but not booked, so the
+    picker can disable it instead of letting a patient walk into a conversation
+    that can never produce a slot."""
+    bookable = db.query(WorkingSchedule).filter(
+        WorkingSchedule.branch_id == b.id).first() is not None
+    return PublicBranchOut(
+        id=b.id, slug=b.slug, name=b.name, address=b.address,
+        phone=b.phone, working_hours=b.working_hours, bookable=bookable,
+    )
+
+
+def _active_branches(db: Session, clinic_id: int) -> list[PublicBranchOut]:
+    rows = (
+        db.query(Branch)
+        .filter(Branch.clinic_id == clinic_id, Branch.is_active == True)  # noqa: E712
+        .order_by(Branch.id)
+        .all()
+    )
+    return [_branch_view(db, b) for b in rows]
+
+
 @router.get("/clinic-by-slug/{slug}", response_model=PublicClinicOut,
             dependencies=[Depends(public_rate_limiter)])
 def clinic_by_slug(slug: str, db: Session = Depends(get_db)):
@@ -26,28 +50,14 @@ def clinic_by_slug(slug: str, db: Session = Depends(get_db)):
     clinic = db.query(Clinic).filter(Clinic.slug == slug).first()
     if not clinic:
         raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
-
-    def _view(b: Branch) -> PublicBranchOut:
-        # A location with no working schedule can be shown but not booked, so the
-        # UI can grey it out instead of letting a patient walk into a dead end.
-        bookable = db.query(WorkingSchedule).filter(
-            WorkingSchedule.branch_id == b.id).first() is not None
-        return PublicBranchOut(
-            id=b.id, slug=b.slug, name=b.name, address=b.address,
-            phone=b.phone, working_hours=b.working_hours, bookable=bookable,
-        )
-
-    siblings = (
-        db.query(Branch)
-        .filter(Branch.clinic_id == clinic.id, Branch.is_active == True)  # noqa: E712
-        .order_by(Branch.id)
-        .all()
-    )
     return PublicClinicOut(
-        branch=_view(chosen) if chosen else None,
-        branches=[_view(b) for b in siblings],
         clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
         address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
+        default_locale=clinic.default_locale or "vi",
+        public_chat_v1_enabled=bool(clinic.public_chat_v1_enabled),
+        # Legacy /c/<slug> links name no location, so the chat page still needs
+        # the list to let the patient pick one.
+        branches=_active_branches(db, clinic.id),
     )
 
 
@@ -82,7 +92,6 @@ def resolve_public_chat_target(brand_slug: str, branch_slug: str | None = None,
     translated here. With a branch the mapping is exact; without one we fall
     back to the brand's first active clinic.
     """
-    from backend.app.models.models import Branch, WorkingSchedule
     from backend.app.core.slug import resolve as resolve_slug
 
     clinic = None
@@ -113,30 +122,13 @@ def resolve_public_chat_target(brand_slug: str, branch_slug: str | None = None,
     if not clinic:
         raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
 
-    def _view(b: Branch) -> PublicBranchOut:
-        # A location with no working schedule can be listed but not booked, so
-        # the picker can disable it instead of letting a patient walk into a
-        # conversation that can never produce a slot.
-        bookable = db.query(WorkingSchedule).filter(
-            WorkingSchedule.branch_id == b.id).first() is not None
-        return PublicBranchOut(
-            id=b.id, slug=b.slug, name=b.name, address=b.address,
-            phone=b.phone, working_hours=b.working_hours, bookable=bookable,
-        )
-
-    siblings = (
-        db.query(Branch)
-        .filter(Branch.clinic_id == clinic.id, Branch.is_active == True)  # noqa: E712
-        .order_by(Branch.id)
-        .all()
-    )
     return PublicClinicOut(
         clinic_id=clinic.id, slug=clinic.slug, name=clinic.name, logo_url=clinic.logo_url,
         address=clinic.address, phone=clinic.phone, is_active=bool(clinic.is_active),
         default_locale=clinic.default_locale or "vi",
         public_chat_v1_enabled=bool(clinic.public_chat_v1_enabled),
-        branch=_view(chosen) if chosen else None,
-        branches=[_view(b) for b in siblings],
+        branch=_branch_view(db, chosen) if chosen else None,
+        branches=_active_branches(db, clinic.id),
     )
 
 

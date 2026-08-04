@@ -118,3 +118,19 @@ def test_conversation_stores_the_branch(db, clinic):
     db.add(conv)
     db.commit()
     assert db.query(Conversation).first().branch_id == clinic["bm"].id
+
+
+def test_public_endpoints_return_branch_lists(db, clinic):
+    """All three public resolvers must build a branch list without blowing up.
+
+    Regression: a helper was once pasted into the wrong endpoint, leaving an
+    undefined name that only surfaced as a 500 at runtime, never at import.
+    """
+    from backend.app.api.endpoints.public import _active_branches, _branch_view
+
+    views = _active_branches(db, clinic["clinic"].id)
+    assert {v.name for v in views} == {"Quan 10", "Quan 1", "Bach Mai"}
+    assert {v.name: v.bookable for v in views} == {
+        "Quan 10": True, "Quan 1": False, "Bach Mai": True,
+    }
+    assert _branch_view(db, clinic["bm"]).bookable is True
