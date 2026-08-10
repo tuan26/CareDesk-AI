@@ -227,6 +227,23 @@ def zns_is_configured(db: Session, clinic_id: Optional[int]) -> bool:
     )
 
 
+def zns_is_simulated(db: Session, clinic_id: Optional[int]) -> bool:
+    """Is this clinic pointed at a Zalo *Test* OA rather than its real one?
+
+    A test OA speaks the same endpoint with the same payload — nothing in the
+    response distinguishes it — so it has to be declared. Set
+    ``extra_config = {"zns_sandbox": true}`` alongside the test token.
+
+    Without this flag a test OA would report every send as having reached the
+    patient and turn the dashboard green, which is the exact failure the SMS
+    sandbox handling exists to prevent.
+    """
+    if not clinic_id:
+        return False
+    integration = get_integration(db, clinic_id, "zalo")
+    return bool(integration and (integration.extra_config or {}).get("zns_sandbox"))
+
+
 def outbound_status(db: Session, clinic_id: Optional[int]) -> dict:
     """What this clinic can actually reach a patient's phone with.
 
@@ -239,15 +256,18 @@ def outbound_status(db: Session, clinic_id: Optional[int]) -> dict:
     is being swallowed by a sandbox is exactly the false confidence this whole
     module exists to prevent.
     """
-    zns = zns_is_configured(db, clinic_id)
+    zns_ready = zns_is_configured(db, clinic_id)
+    zns_test = zns_ready and zns_is_simulated(db, clinic_id)
+    zns_real = zns_ready and not zns_test
     sms_real = sms_reaches_real_phones()
     return {
-        "zns": zns,
+        "zns": zns_real,
+        "zns_simulated": zns_test,
         "sms": sms_real,
         "sms_simulated": sms_is_configured() and sms_is_simulated(),
         "sms_mode": settings.SMS_PROVIDER or "none",
         "email": bool(settings.SMTP_USER and settings.SMTP_PASSWORD),
-        "can_reach_phone": zns or sms_real,
+        "can_reach_phone": zns_real or sms_real,
     }
 
 
@@ -269,11 +289,12 @@ def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str
                 timeout=15,
             )
             if resp.status_code == 200 and resp.json().get("error", 0) == 0:
-                # A Zalo *Test* OA uses this same endpoint with a test token, so
-                # a successful send here may not have reached a real handset.
-                # That is a deployment-config concern, not something the code can
-                # detect — see SO_TAY_VAN_HANH_PRODUCT.md.
-                return Delivery("zns", True, reached_patient=True)
+                # A Zalo Test OA answers identically to a real one, so whether a
+                # patient was actually reached comes from the declared flag, not
+                # from the response.
+                simulated = zns_is_simulated(db, clinic_id)
+                return Delivery("zns_sandbox" if simulated else "zns", True,
+                                reached_patient=not simulated)
             logger.error("ZNS send failed for clinic %s: %s", clinic_id, resp.text[:300])
         except Exception as exc:
             logger.exception("ZNS send failed for clinic %s", clinic_id)

@@ -323,6 +323,50 @@ def test_a_simulated_sender_does_not_make_the_clinic_look_ready(db, clinic, monk
     assert status["sms_mode"] == "mock"
 
 
+def test_a_zalo_test_oa_must_be_declared_and_does_not_count_as_ready(db, clinic, monkeypatch):
+    """A Test OA speaks the same endpoint and answers identically to a real one,
+    so nothing in the response reveals that no patient was reached. It has to be
+    declared — otherwise the dashboard goes green on a channel nobody receives."""
+    db.add(ChannelIntegration(
+        clinic_id=clinic.id, channel="zalo", enabled=True, access_token="test-tok",
+        extra_config={"zns_template_id": "123", "zns_sandbox": True},
+    ))
+    db.commit()
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"error": 0}
+
+    monkeypatch.setattr(channel_gateway.httpx, "post", lambda *a, **kw: Resp())
+
+    result = send_zns_or_sms(db, clinic.id, "0900000000", "x")
+    assert result.delivered is True, "tích hợp chạy được, không cần thử lại"
+    assert result.reached_patient is False
+    assert result.channel == "zns_sandbox"
+
+    status = outbound_status(db, clinic.id)
+    assert status["zns"] is False and status["zns_simulated"] is True
+    assert status["can_reach_phone"] is False
+
+
+def test_a_real_oa_does_count_as_ready(db, clinic, monkeypatch):
+    db.add(ChannelIntegration(
+        clinic_id=clinic.id, channel="zalo", enabled=True, access_token="tok",
+        extra_config={"zns_template_id": "123"},
+    ))
+    db.commit()
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"error": 0}
+
+    monkeypatch.setattr(channel_gateway.httpx, "post", lambda *a, **kw: Resp())
+
+    result = send_zns_or_sms(db, clinic.id, "0900000000", "x")
+    assert result.channel == "zns" and result.reached_patient is True
+    assert outbound_status(db, clinic.id)["can_reach_phone"] is True
+
+
 def test_speedsms_has_no_sandbox_mode(monkeypatch):
     """Unverified, so not implemented: believing messages are suppressed while
     they are in fact sent and billed is worse than having no sandbox at all."""
