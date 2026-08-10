@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Appointment, ReminderLog
-from backend.app.services.channel_gateway import send_zns_or_sms
+from backend.app.services.channel_gateway import CHANNEL_NONE, send_zns_or_sms
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,61 @@ def build_reminder_text(appt: Appointment, kind: str) -> str:
     )
 
 
+#: How many times one reminder is attempted on one medium before we stop. The
+#: scheduler wakes every REMINDER_CHECK_INTERVAL_SECONDS, so without a ceiling a
+#: permanently failing send is retried hundreds of times before the appointment
+#: even arrives — free while nothing is configured, billed per attempt once a
+#: real SMS gateway is in place.
+MAX_SEND_ATTEMPTS = 3
+
+
+def _open_outbox_entry(db, appointment_id: int, kind: str, medium: str):
+    """The outbox row to attempt now, or None if this one is finished.
+
+    Finished means either already sent, or failed as many times as we allow.
+    Creates the row on first attempt so a failure is still on record — the whole
+    point of an outbox is that "we tried and it did not work" is visible rather
+    than being indistinguishable from "we never got round to it".
+    """
+    entry = db.query(ReminderLog).filter(
+        ReminderLog.appointment_id == appointment_id,
+        ReminderLog.kind == kind,
+        ReminderLog.medium == medium,
+    ).first()
+
+    if entry is None:
+        entry = ReminderLog(appointment_id=appointment_id, kind=kind, medium=medium,
+                            channel=CHANNEL_NONE, status="failed", attempts=0)
+        db.add(entry)
+        return entry
+
+    if entry.status == "sent" or entry.attempts >= MAX_SEND_ATTEMPTS:
+        return None
+    return entry
+
+
+def _record(entry: ReminderLog, delivered: bool, channel: str, detail: str,
+            attempted: bool = True, retryable: bool = True) -> None:
+    entry.channel = channel
+    if attempted:
+        # Only a real attempt counts. A missing channel is a config gap, not a
+        # failed delivery — charging it an attempt would retire every reminder
+        # that queued up while the clinic was waiting for its Zalo OA.
+        entry.attempts += 1
+
+    if delivered:
+        entry.status = "sent"
+        entry.last_error = None
+        return
+
+    entry.status = "failed"
+    entry.last_error = detail[:500]
+    if attempted and not retryable:
+        # The provider evaluated this message and refused it. Retrying buys the
+        # same rejection at the same price, so stop here.
+        entry.attempts = MAX_SEND_ATTEMPTS
+
+
 async def check_and_send_reminders():
     """One scheduler tick: scan upcoming appointments and send pending reminders."""
     from backend.app.api.endpoints.appointment import send_email_notification
@@ -64,39 +119,34 @@ async def check_and_send_reminders():
             ).all()
 
             for appt in candidates:
-                already = db.query(ReminderLog).filter(
-                    ReminderLog.appointment_id == appt.id,
-                    ReminderLog.kind == kind
-                ).first()
-                if already:
-                    continue
-
                 text = build_reminder_text(appt, kind)
                 patient = appt.patient
+                if not patient:
+                    continue
 
-                # A ReminderLog is written ONLY for a confirmed delivery, because
-                # the `already` check above reads it back as "this appointment has
-                # been reminded". Logging a failed send would silently retire the
-                # reminder: the patient never hears from us, and configuring a
-                # real channel later does not fix the appointments already marked.
-                if patient and patient.phone:
-                    result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
-                    if result.delivered:
-                        db.add(ReminderLog(appointment_id=appt.id, kind=kind,
-                                           channel=result.channel))
-                        sent_count += 1
-                    else:
-                        undelivered += 1
+                if patient.phone:
+                    entry = _open_outbox_entry(db, appt.id, kind, "phone")
+                    if entry is not None:
+                        result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
+                        _record(entry, result.delivered, result.channel, result.detail,
+                                attempted=result.attempted, retryable=result.retryable)
+                        sent_count += result.delivered
+                        undelivered += not result.delivered
 
-                if patient and patient.email:
-                    html = text.replace(" | ", "<br>").replace("Xác nhận: ", "<br><b>Xác nhận:</b> ").replace("Hủy lịch: ", "<b>Hủy lịch:</b> ")
-                    if await send_email_notification(
-                        patient.email, "CareDesk AI - Nhắc lịch hẹn khám", f"<p>{html}</p>"
-                    ):
-                        db.add(ReminderLog(appointment_id=appt.id, kind=kind, channel="email"))
-                        sent_count += 1
-                    else:
-                        undelivered += 1
+                if patient.email:
+                    entry = _open_outbox_entry(db, appt.id, kind, "email")
+                    if entry is not None:
+                        html = text.replace(" | ", "<br>").replace("Xác nhận: ", "<br><b>Xác nhận:</b> ").replace("Hủy lịch: ", "<b>Hủy lịch:</b> ")
+                        smtp_ready = bool(settings.SMTP_USER and settings.SMTP_PASSWORD)
+                        ok = await send_email_notification(
+                            patient.email, "CareDesk AI - Nhắc lịch hẹn khám", f"<p>{html}</p>"
+                        )
+                        _record(entry, ok, "email" if ok else CHANNEL_NONE,
+                                "" if ok else ("SMTP gửi lỗi" if smtp_ready
+                                               else "SMTP chưa cấu hình"),
+                                attempted=smtp_ready)
+                        sent_count += ok
+                        undelivered += not ok
 
                 db.commit()
     except Exception:
@@ -107,8 +157,8 @@ async def check_and_send_reminders():
 
     if undelivered:
         logger.warning(
-            "%s lời nhắc KHÔNG gửi được (chưa cấu hình kênh, hoặc nhà cung cấp từ chối). "
-            "Các lịch hẹn này vẫn ở trạng thái chưa nhắc và sẽ được thử lại ở lượt sau.",
+            "%s lời nhắc chưa gửi được ở lượt này (chưa cấu hình kênh, hoặc nhà "
+            "cung cấp từ chối). Xem bảng reminder_logs để biết lý do từng ca.",
             undelivered,
         )
     return sent_count

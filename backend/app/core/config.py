@@ -99,10 +99,20 @@ class Settings(BaseSettings):
     # blocks a prime evening slot all day.
     DEPOSIT_HOLD_MINUTES: int = int(os.getenv("DEPOSIT_HOLD_MINUTES", "15"))
 
-    SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "")        # "esms" | "speedsms" | ""
+    # "esms" | "speedsms" | "mock" | "". "mock" needs no account and logs
+    # instead of sending — for local dev. Deployment config, not a per-clinic
+    # feature flag: which gateway the process talks to is a property of the
+    # environment, and a clinic must never be able to switch itself into a
+    # sandbox and stop reaching its own patients.
+    SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "")
     SMS_API_KEY: str = os.getenv("SMS_API_KEY", "")
     SMS_SECRET_KEY: str = os.getenv("SMS_SECRET_KEY", "")    # eSMS only
     SMS_BRANDNAME: str = os.getenv("SMS_BRANDNAME", "")      # registered sender name
+    # eSMS sandbox: the request is validated and answered normally but the
+    # message is not stored, not charged and not delivered. Better than the mock
+    # for staging because it exercises real credentials and real error paths.
+    # No confirmed equivalent exists for SpeedSMS, so this only affects eSMS.
+    SMS_SANDBOX: bool = os.getenv("SMS_SANDBOX", "false").lower() in ("1", "true", "yes")
 
 
     # Rate limiting for public endpoints (requests per minute per IP)

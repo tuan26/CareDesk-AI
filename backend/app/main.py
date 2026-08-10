@@ -34,6 +34,16 @@ if settings.is_production and "SUPER_SECRET_KEY" in settings.SECRET_KEY:
         "SECRET_KEY is still the default placeholder. Set a real SECRET_KEY "
         "env var before running with ENVIRONMENT=production."
     )
+if settings.is_production and (settings.SMS_PROVIDER == "mock" or settings.SMS_SANDBOX):
+    # A simulated sender in production is the worst of both worlds: the clinic
+    # sees reminders marked as handled while no patient is reached, and nothing
+    # on screen looks wrong. Sandbox belongs on staging.
+    raise RuntimeError(
+        "SMS_PROVIDER=mock hoặc SMS_SANDBOX đang bật với ENVIRONMENT=production. "
+        "Tin nhắn sẽ KHÔNG tới tay bệnh nhân. Dùng nhà cung cấp thật, hoặc để "
+        "SMS_PROVIDER trống nếu chưa có tài khoản — hệ thống sẽ báo rõ là chưa "
+        "gửi được thay vì giả vờ đã gửi."
+    )
 if settings.is_production and "localhost" in settings.PUBLIC_BASE_URL:
     # Every canonical link, og:url and sitemap entry is built from this. Left at
     # localhost, Facebook/Zalo previews and Google's index point at nothing.

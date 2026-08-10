@@ -377,7 +377,8 @@ async def send_appointment_reminder(
     if patient.phone:
         result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
         if result.delivered:
-            db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel=result.channel))
+            db.add(ReminderLog(appointment_id=appt.id, kind="manual", medium="phone",
+                               channel=result.channel, status="sent", attempts=1))
             sent_channels.append(result.channel.upper())
         else:
             failures.append(result.detail or "không gửi được tin tới số điện thoại")
@@ -400,7 +401,8 @@ async def send_appointment_reminder(
         if await send_email_notification(
             patient.email, "CareDesk AI - Nhắc lịch hẹn khám", html
         ):
-            db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel="email"))
+            db.add(ReminderLog(appointment_id=appt.id, kind="manual", medium="email",
+                               channel="email", status="sent", attempts=1))
             sent_channels.append("EMAIL")
         else:
             failures.append("email chưa cấu hình hoặc gửi lỗi")

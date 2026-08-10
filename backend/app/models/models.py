@@ -354,13 +354,30 @@ class ChannelIntegration(Base):
 
 
 class ReminderLog(Base):
+    """Outbox for one reminder on one channel.
+
+    A row exists as soon as we try, not only when we succeed. Recording attempts
+    is what bounds the retries: this table is also the scheduler's "already
+    handled?" check, so with success-only rows a permanently failing send is
+    retried on every tick forever — cheap while nothing is configured, expensive
+    the moment a real SMS gateway is charging per attempt.
+    """
     __tablename__ = "reminder_logs"
 
     id = Column(Integer, primary_key=True, index=True)
     appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False, index=True)
     kind = Column(String, nullable=False)  # 24h | 2h | manual
-    channel = Column(String, nullable=False)  # email | zns | sms
+    # phone | email. The unit of retry: a patient with both should still get the
+    # email when SMS is failing, and vice versa, so each is tracked separately.
+    medium = Column(String, nullable=False, default="phone", index=True)
+    # email | zns | sms | sms_sandbox | none. sms_sandbox and mock sends are
+    # real flow runs that never reached a handset — never count them as delivery.
+    channel = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="sent")  # sent | failed
+    attempts = Column(Integer, nullable=False, default=1)
+    last_error = Column(Text, nullable=True)
     sent_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 # ============ REVENUE ENGINE ============

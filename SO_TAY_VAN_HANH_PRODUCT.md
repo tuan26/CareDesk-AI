@@ -70,33 +70,80 @@ Thứ tự kiểm tra:
 
 ---
 
-## 3. Kênh gửi tin — việc duy nhất bạn không kiểm soát được thời gian
+## 3. Kênh gửi tin — test được gần hết mà chưa cần tài khoản thật
 
-Nhắc lịch là một nửa lời hứa "giảm no-show". Không có kênh thì không có nhắc lịch.
+Nhắc lịch là một nửa lời hứa "giảm no-show". Nhưng **không phải chờ có OA thật
+mới test được luồng**.
 
-| Kênh | Cần gì | Mất bao lâu |
-|---|---|---|
-| Zalo ZNS | OA đã duyệt + `zns_template_id` được Zalo phê duyệt | vài ngày → vài tuần |
-| SMS | Tài khoản eSMS/SpeedSMS + brandname đăng ký | vài ngày |
-| Email | SMTP | ngay |
+### Ba môi trường, ba nhà cung cấp
 
-Tích hợp đã viết xong cả ba. Khi có tài khoản, chỉ cần điền:
+| Môi trường | Cấu hình | Gọi API thật? | Tới máy khách? |
+|---|---|---|---|
+| **dev** | `SMS_PROVIDER=mock` | không | không |
+| **staging** | `SMS_PROVIDER=esms` + `SMS_SANDBOX=true` | **có** | không |
+| **production** | `SMS_PROVIDER=esms` + `SMS_SANDBOX=false` | có | **có** |
 
-```bash
-SMS_PROVIDER=esms          # hoặc speedsms
-SMS_API_KEY=...
-SMS_SECRET_KEY=...         # chỉ eSMS cần
-SMS_BRANDNAME=CAREDESK
+`Sandbox=1` của eSMS: request được kiểm tra và trả lời như thật, nhưng tin không
+lưu, **không tính phí, không gửi tới máy khách**. Đây là thứ nên dùng cho
+staging chứ không phải mock — nó kiểm chứng cả thông tin đăng nhập thật, định
+dạng payload thật lẫn đường xử lý lỗi thật, những thứ mock không đụng tới.
+
+> **SpeedSMS không có sandbox.** Không tìm thấy tài liệu xác nhận, nên tôi
+> **cố tình không** cài chế độ sandbox cho nó. Tưởng tin đang bị chặn trong khi
+> thực tế nó vẫn gửi và vẫn tính tiền thì còn tệ hơn là không có sandbox. Muốn
+> test thì dùng `mock` hoặc eSMS sandbox.
+
+**Zalo:** OA Test dùng chung endpoint với OA thật — chỉ khác `access_token` và
+`zns_template_id`, nên **không cần sửa code**, chỉ điền cấu hình khác trong
+**Cài đặt → Kênh kết nối**. Lưu ý theo tài liệu Zalo, OA Test chỉ dùng được sau
+khi OA đã xác thực và admin nhận được email phản hồi — nên nó rút ngắn phần tích
+hợp, chứ không bỏ được bước xác thực OA.
+
+Cần cả `access_token` **và** `zns_template_id`. Chỉ có OA thôi là chưa đủ — đây
+là lý do phổ biến nhất khiến nhắc lịch im lặng ngừng chạy.
+
+### Chốt chặn: production không được dùng đồ giả
+
+App **từ chối khởi động** nếu `ENVIRONMENT=production` mà còn `SMS_PROVIDER=mock`
+hoặc `SMS_SANDBOX=true`. Một sender giả trên production là trường hợp tệ nhất:
+phòng khám thấy lời nhắc được đánh dấu đã xử lý, không bệnh nhân nào nhận được
+gì, và trên màn hình không có gì trông sai cả.
+
+Vì cùng lý do đó, **chọn nhà cung cấp là cấu hình môi trường, không phải feature
+flag theo phòng khám** — một phòng khám không bao giờ được tự chuyển mình vào
+sandbox rồi ngừng liên lạc với chính khách của họ.
+
+### Trong lúc chờ tài khoản: hệ thống nói thật
+
+Dashboard hiện cảnh báo đỏ *"Chưa kết nối Zalo ZNS hoặc SMS — tin nhắn nhắc lịch
+KHÔNG được gửi đi"*. Mock và sandbox **không** làm tắt cảnh báo này
+(`can_reach_phone` loại trừ cả hai) — đèn xanh trong khi mọi tin bị sandbox nuốt
+chính là kiểu tự tin sai lầm mà toàn bộ phần này sinh ra để chặn.
+
+### Outbox: xem được từng lời nhắc hỏng vì sao
+
+Bảng `reminder_logs` ghi **mọi lần thử**, không chỉ lần thành công:
+
+| Cột | Ý nghĩa |
+|---|---|
+| `medium` | `phone` / `email` — hỏng SMS thì email vẫn gửi, và ngược lại |
+| `status` | `sent` / `failed` |
+| `attempts` | trần 3 lần |
+| `last_error` | lý do cụ thể |
+
+Quy tắc quan trọng nhất ở đây: **chưa cấu hình kênh thì không tính là một lần
+thử**. Nghĩa là ba tuần chờ Zalo duyệt OA, mọi lời nhắc dồn lại vẫn nguyên vẹn và
+**tự động gửi hết ngay lượt quét đầu tiên** sau khi bạn điền thông tin — không
+mất lịch nào.
+
+Ngược lại, nhà cung cấp **nhìn vào tin rồi từ chối** (sai số điện thoại, brandname
+bị khoá, hết tiền) thì dừng ngay, không thử lại: thử lại chỉ mua đúng câu trả lời
+cũ với đúng cái giá cũ.
+
+```sql
+-- các lời nhắc chưa gửi được và lý do
+SELECT kind, medium, attempts, last_error FROM reminder_logs WHERE status='failed';
 ```
-
-Zalo ZNS cấu hình theo từng phòng khám trong **Cài đặt → Kênh kết nối**, cần cả
-`access_token` **và** `zns_template_id`. Chỉ có OA thôi là chưa đủ — đây là lý do
-phổ biến nhất khiến nhắc lịch im lặng ngừng chạy.
-
-**Trong lúc chờ:** hệ thống nói thật. Dashboard hiện cảnh báo đỏ "Chưa kết nối
-Zalo ZNS hoặc SMS — tin nhắn nhắc lịch KHÔNG được gửi đi", và **không ghi nhận
-là đã gửi**. Nghĩa là mọi lịch hẹn chưa nhắc được sẽ **tự động nhắc bù** ngay khi
-bạn cắm kênh vào — không mất lịch nào.
 
 ---
 
