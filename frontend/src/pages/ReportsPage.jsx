@@ -51,7 +51,7 @@ export default function ReportsPage() {
         return;
       }
       if (res.status === 403) {
-        setError('Chỉ chủ phòng khám (owner) hoặc admin mới xem được báo cáo.');
+        setError('Chỉ chủ phòng khám mới xem được báo cáo.');
         return;
       }
       setReport(await res.json());

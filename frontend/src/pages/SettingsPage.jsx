@@ -168,7 +168,7 @@ export default function SettingsPage() {
   const [evalReport, setEvalReport] = useState(null);
   const navigate = useNavigate();
 
-  const isManager = user && (user.role === 'owner' || user.role === 'admin');
+  const isManager = user && user.role === 'owner';
 
   const fetchData = async () => {
     try {
@@ -182,7 +182,7 @@ export default function SettingsPage() {
       const clinics = await clinicsRes.json();
       setClinic(clinics[0] || null);
 
-      if (me.role === 'owner' || me.role === 'admin') {
+      if (me.role === 'owner') {
         const [chRes, auditRes] = await Promise.all([
           fetch(`${API_BASE}/clinic/channels`, { headers }),
           fetch(`${API_BASE}/clinic/audit-logs?limit=50`, { headers })
@@ -324,7 +324,7 @@ export default function SettingsPage() {
                 </>
               ) : (
                 <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Chỉ chủ phòng khám / admin được cấu hình kênh kết nối.
+                  Chỉ chủ phòng khám được cấu hình kênh kết nối.
                 </div>
               )}
             </div>

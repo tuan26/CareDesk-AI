@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from backend.app.core.database import get_db
 from backend.app.core.config import settings
-from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
+from backend.app.api.deps import verify_receptionist_or_above, verify_owner
 from backend.app.models.models import (
     Appointment, PatientLead, Service, Doctor, Branch, User, Conversation
 )
@@ -405,7 +405,7 @@ def send_appointment_reminder(
 def delete_appointment(
     appt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     appt = db.query(Appointment).filter(Appointment.id == appt_id).first()
     if not appt:

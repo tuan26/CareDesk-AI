@@ -8,7 +8,7 @@ from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import verify_receptionist_or_above
+from backend.app.api.deps import ROLE_OWNER, verify_receptionist_or_above
 from backend.app.models.models import (
     Appointment, Conversation, PatientLead, RevenueRecord, PatientPackage, User
 )
@@ -63,8 +63,8 @@ def answer_appointments(db: Session, user: User, month: bool) -> str:
 
 
 def answer_revenue(db: Session, user: User, month: bool) -> str:
-    if user.role not in ("owner", "admin"):
-        return "Xin lỗi, số liệu doanh thu chỉ dành cho chủ phòng khám hoặc quản trị viên."
+    if user.role != ROLE_OWNER:
+        return "Xin lỗi, số liệu doanh thu chỉ dành cho chủ phòng khám."
     start, end = _range_month() if month else _range_today()
     records = _scoped(db.query(RevenueRecord), RevenueRecord, user).filter(
         RevenueRecord.recorded_at >= start, RevenueRecord.recorded_at <= end

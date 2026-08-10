@@ -5,6 +5,10 @@ from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
+from backend.app.core.roles import (  # noqa: F401 — re-exported for endpoints
+    ABOVE_CLINIC_ROLES, CLINIC_ROLES, ROLE_ORG_OWNER, ROLE_OWNER,
+    ROLE_PLATFORM, ROLE_RECEPTIONIST,
+)
 from backend.app.models.models import User, Clinic
 from backend.app.schemas.schemas import TokenData
 
@@ -47,8 +51,12 @@ def get_current_user(
             # Detach so the in-memory scope override is never persisted to the DB.
             db.expunge(user)
             user.clinic_id = clinic.id
-            if user.role == "org_owner":
-                user.role = "owner"
+            # Above-clinic roles have no meaning to the clinic-level RoleCheckers,
+            # so map them onto the clinic role they stand in for. Without this a
+            # platform admin stepping into a clinic would be refused by every
+            # owner-gated endpoint.
+            if user.role in ABOVE_CLINIC_ROLES:
+                user.role = ROLE_OWNER
     return user
 
 
@@ -102,6 +110,5 @@ class RoleChecker:
         return current_user
 
 # Global dependency helpers for RBAC
-verify_admin = RoleChecker(["admin"])
-verify_owner_or_admin = RoleChecker(["owner", "admin"])
-verify_receptionist_or_above = RoleChecker(["receptionist", "owner", "admin"])
+verify_owner = RoleChecker([ROLE_OWNER])
+verify_receptionist_or_above = RoleChecker([ROLE_RECEPTIONIST, ROLE_OWNER])

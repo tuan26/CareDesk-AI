@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
+from backend.app.api.deps import verify_receptionist_or_above, verify_owner
 from backend.app.models.models import Conversation, Message, PatientLead, User, Clinic, Branch
 from backend.app.schemas.schemas import (
     ConversationOut, MessageOut, MessageBase, ConversationStatusUpdate, PatientLeadCreate
@@ -320,7 +320,7 @@ def update_conversation_status(
 def erase_patient_data(
     conv_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     """
     Delete patient conversation data upon request (GDPR compliance / Data Erasure).
@@ -351,7 +351,7 @@ def erase_patient_data(
 @router.post("/evaluate-ai")
 def evaluate_ai_quality(
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     """
     Run automated AI evaluation against Golden Dataset.

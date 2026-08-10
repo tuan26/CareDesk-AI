@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
+from backend.app.api.deps import verify_receptionist_or_above, verify_owner
 from backend.app.models.models import (
     ServicePackage, PatientPackage, PatientLead, RevenueRecord, User
 )
@@ -34,7 +34,7 @@ def list_packages(
 def create_package(
     pkg_in: ServicePackageCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     if not current_user.clinic_id:
         raise HTTPException(status_code=400, detail="Tài khoản chưa gắn với phòng khám.")
@@ -51,7 +51,7 @@ def update_package(
     package_id: int,
     pkg_in: ServicePackageCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     pkg = db.query(ServicePackage).filter(ServicePackage.id == package_id).first()
     if not pkg:
@@ -70,7 +70,7 @@ def update_package(
 def delete_package(
     package_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     pkg = db.query(ServicePackage).filter(ServicePackage.id == package_id).first()
     if not pkg:

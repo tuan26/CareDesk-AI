@@ -171,7 +171,7 @@ export default function AppointmentsPage() {
     };
   };
 
-  const isManager = user && (user.role === 'owner' || user.role === 'admin');
+  const isManager = user && user.role === 'owner';
 
   const fetchAppointments = async () => {
     try {

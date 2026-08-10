@@ -7,6 +7,7 @@ from backend.app.core.database import SessionLocal
 from backend.app.models.models import (
     User, Clinic, Branch, Service, Doctor, WorkingSchedule, AISafetyRule, Organization, Plan
 )
+from backend.app.core.roles import ROLE_PLATFORM
 from backend.app.core.slug import assign_slug
 from backend.app.core.security import get_password_hash
 
@@ -22,13 +23,6 @@ def _seed_demo_data(db: Session) -> None:
     if db.query(User).count() == 0:
         logger.info("Seeding demo users...")
         users = [
-            User(
-                email="admin@caredesk.ai",
-                password_hash=get_password_hash("admin123"),
-                full_name="Hệ thống Admin",
-                role="admin",
-                is_active=True
-            ),
             User(
                 email="owner@caredesk.ai",
                 password_hash=get_password_hash("owner123"),
@@ -216,7 +210,7 @@ def _seed_platform_admin(db: Session) -> None:
         email=email,
         password_hash=get_password_hash(password),
         full_name="Nhà phát hành CareDesk",
-        role="admin",
+        role=ROLE_PLATFORM,
         is_platform_admin=True,
         clinic_id=None,
         is_active=True,

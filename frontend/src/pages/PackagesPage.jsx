@@ -19,7 +19,7 @@ export default function PackagesPage() {
   const [sellForm, setSellForm] = useState({ patient_id: '', package_id: '' });
   const navigate = useNavigate();
 
-  const isManager = user && (user.role === 'owner' || user.role === 'admin');
+  const isManager = user && user.role === 'owner';
 
   const fetchData = async () => {
     try {

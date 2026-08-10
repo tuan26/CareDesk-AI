@@ -9,7 +9,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import verify_owner_or_admin
+from backend.app.api.deps import verify_owner
 from backend.app.models.models import (
     Appointment, Conversation, User, RevenueRecord, PatientPackage, Clinic
 )
@@ -22,7 +22,7 @@ def get_report_summary(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     end_date = end_date or date.today()
     start_date = start_date or (end_date - timedelta(days=29))

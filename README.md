@@ -58,9 +58,14 @@ Tài khoản seed (chỉ tạo khi `SEED_DEMO_DATA` bật, mặc định bật �
 |---|---|---|---|
 | `owner@caredesk.ai` | `owner123` | owner | Dashboard phòng khám |
 | `receptionist@caredesk.ai` | `receptionist123` | receptionist | Inbox, lịch hẹn |
-| `admin@caredesk.ai` | `admin123` | admin | Toàn bộ phòng khám |
 | `chain@caredesk.ai` | `chain123` | org_owner | `/org` — console chuỗi |
-| `platform@caredesk.ai` | `platform123` | platform admin | `/platform` — console nhà phát hành |
+| `platform@caredesk.ai` | `platform123` | platform | `/platform` — console nhà phát hành |
+
+Vai trò — xem [backend/app/core/roles.py](backend/app/core/roles.py). Trong một
+phòng khám chỉ có **owner** và **receptionist**. `org_owner` và `platform` đứng
+trên phòng khám (`clinic_id` = NULL) và chỉ có quyền trong một phòng khám sau khi
+"bước vào" phòng khám đó, lúc đó được cấp quyền tương đương owner cho riêng phòng
+khám ấy.
 
 ## Test
 

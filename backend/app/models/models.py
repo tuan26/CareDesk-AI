@@ -13,7 +13,9 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
-    role = Column(String, default="receptionist")  # admin | owner | receptionist | org_owner
+    # See core/roles.py. Clinic-level: owner | receptionist.
+    # Above a clinic (clinic_id is NULL): org_owner | platform.
+    role = Column(String, default="receptionist")
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)  # link account -> doctor (copilot personalization)
     is_platform_admin = Column(Boolean, default=False)  # vendor/publisher super-admin (cross-tenant)
     is_active = Column(Boolean, default=True)

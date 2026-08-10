@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.api.deps import (
-    verify_receptionist_or_above, verify_owner_or_admin, get_current_active_user
+    verify_receptionist_or_above, verify_owner, get_current_active_user
 )
 from backend.app.models.models import (
     Clinic, Branch, Service, Doctor, WorkingSchedule, User, ChannelIntegration, AuditLog
@@ -48,7 +48,7 @@ def update_clinic(
     clinic_id: int,
     clinic_in: ClinicCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     clinic = db.query(Clinic).filter(Clinic.id == clinic_id).first()
     if not clinic:
@@ -77,7 +77,7 @@ def get_branches(
 def create_branch(
     branch_in: BranchCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     data = branch_in.model_dump()
     if current_user.clinic_id:
@@ -97,7 +97,7 @@ def update_branch(
     branch_id: int,
     body: BranchUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     branch = db.query(Branch).filter(Branch.id == branch_id).first()
     if not branch:
@@ -127,7 +127,7 @@ def update_branch(
 def delete_branch(
     branch_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     branch = db.query(Branch).filter(Branch.id == branch_id).first()
     if not branch:
@@ -151,7 +151,7 @@ def get_services(
 def create_service(
     service_in: ServiceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     data = service_in.model_dump()
     if current_user.clinic_id:
@@ -168,7 +168,7 @@ def update_service(
     service_id: int,
     service_in: ServiceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     service = db.query(Service).filter(Service.id == service_id).first()
     if not service:
@@ -189,7 +189,7 @@ def update_service(
 def delete_service(
     service_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     service = db.query(Service).filter(Service.id == service_id).first()
     if not service:
@@ -213,7 +213,7 @@ def get_doctors(
 def create_doctor(
     doctor_in: DoctorBase,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     db_doctor = Doctor(**doctor_in.model_dump(), clinic_id=current_user.clinic_id)
     db.add(db_doctor)
@@ -227,7 +227,7 @@ def update_doctor(
     doctor_id: int,
     doctor_in: DoctorBase,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
@@ -246,7 +246,7 @@ def update_doctor(
 def delete_doctor(
     doctor_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
@@ -275,7 +275,7 @@ def get_schedules(
 def create_schedule(
     schedule_in: WorkingScheduleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     doc = db.query(Doctor).filter(Doctor.id == schedule_in.doctor_id).first()
     if not doc:
@@ -296,7 +296,7 @@ def create_schedule(
 def delete_schedule(
     schedule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ):
     sched = db.query(WorkingSchedule).filter(WorkingSchedule.id == schedule_id).first()
     if not sched:
@@ -319,7 +319,7 @@ def _mask(token: str) -> str:
 @router.get("/channels", response_model=List[ChannelIntegrationOut])
 def get_channels(
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     integrations = db.query(ChannelIntegration).filter(
         ChannelIntegration.clinic_id == (current_user.clinic_id or 0)
@@ -336,7 +336,7 @@ def get_channels(
 def upsert_channel(
     channel_in: ChannelIntegrationIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     if channel_in.channel not in ("zalo", "facebook"):
         raise HTTPException(status_code=400, detail="Kênh không hợp lệ (zalo | facebook)")
@@ -374,7 +374,7 @@ def upsert_channel(
 def get_audit_logs(
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     query = db.query(AuditLog, User).outerjoin(User, AuditLog.user_id == User.id)
     if current_user.clinic_id:

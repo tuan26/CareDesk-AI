@@ -29,7 +29,7 @@ export default function ServicesPage() {
     };
   };
 
-  const isManager = user && (user.role === 'owner' || user.role === 'admin');
+  const isManager = user && user.role === 'owner';
 
   const fetchData = async () => {
     try {

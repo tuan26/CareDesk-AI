@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import verify_receptionist_or_above, verify_owner_or_admin
+from backend.app.api.deps import verify_receptionist_or_above, verify_owner
 from backend.app.models.models import (
     AutomationRule, ScheduledAction, ReviewRequest, WaitlistEntry, PatientLead, User
 )
@@ -56,7 +56,7 @@ def update_rule(
     rule_id: int,
     rule_in: AutomationRuleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(verify_owner_or_admin)
+    current_user: User = Depends(verify_owner)
 ) -> Any:
     rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
     if not rule:

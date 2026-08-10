@@ -13,8 +13,11 @@
 | Vai trò | Email | Mật khẩu | Quyền |
 |---|---|---|---|
 | Chủ phòng khám | `owner@caredesk.ai` | `owner123` | Toàn quyền + xem doanh thu/ROI |
-| Quản trị | `admin@caredesk.ai` | `admin123` | Toàn quyền |
 | Lễ tân | `receptionist@caredesk.ai` | `receptionist123` | Vận hành (không xem doanh thu, không sửa cấu hình) |
+
+> Trong một phòng khám chỉ có **hai** vai trò: chủ phòng khám và lễ tân. (Vai trò
+> `admin` cũ đã được gộp vào `owner` — nó có quyền y hệt owner nhưng lại không
+> nhận được bản tin vận hành 8h/20h, nên là nguồn nhầm lẫn.)
 
 > Muốn tạo phòng khám riêng của bạn: bấm **"Đăng ký phòng khám miễn phí"** ở màn đăng nhập — tự có gói Free (200 hội thoại AI/tháng) + 8 kịch bản automation kích hoạt sẵn.
 

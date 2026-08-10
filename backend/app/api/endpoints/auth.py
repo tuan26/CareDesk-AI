@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import create_access_token, verify_password, get_password_hash
-from backend.app.api.deps import get_current_active_user
+from backend.app.api.deps import CLINIC_ROLES, ROLE_OWNER, get_current_active_user
 from backend.app.models.models import User, Clinic
 from backend.app.schemas.schemas import Token, UserOut, UserCreate, ClinicRegister
 from backend.app.services.audit import log_action
@@ -121,13 +121,21 @@ def create_user_by_admin(
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
     """
-    Create a new user. Only accessible if an admin is logged in (or first user creation).
+    Create a staff account inside the caller's own clinic. Owner only.
     """
-    # Owners/admins can create staff accounts for their own clinic only
-    if current_user.role not in ("admin", "owner"):
+    if current_user.role != ROLE_OWNER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Chỉ quản trị viên/chủ phòng khám mới có quyền đăng ký tài khoản mới."
+            detail="Chỉ chủ phòng khám mới có quyền tạo tài khoản nhân viên."
+        )
+
+    # The role arrives from the client, so it must be checked against the set of
+    # roles that exist *inside* a clinic. Otherwise an owner could hand out
+    # "org_owner" or "platform" and grant themselves the whole chain.
+    if user_in.role not in CLINIC_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vai trò không hợp lệ. Chỉ chấp nhận: {', '.join(CLINIC_ROLES)}."
         )
 
     user = db.query(User).filter(User.email == user_in.email).first()

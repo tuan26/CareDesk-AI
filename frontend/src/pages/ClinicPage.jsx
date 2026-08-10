@@ -21,7 +21,7 @@ export default function ClinicPage() {
     };
   };
 
-  const isManager = user && (user.role === 'owner' || user.role === 'admin');
+  const isManager = user && user.role === 'owner';
 
   const fetchData = async () => {
     try {

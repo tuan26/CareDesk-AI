@@ -97,6 +97,7 @@ async def check_and_send_reminders():
 
 async def send_daily_digest():
     """8h/20h digest to the clinic owner: today's numbers pushed into their pocket."""
+    from backend.app.core.roles import ROLE_OWNER
     from backend.app.models.models import Clinic, User, Appointment, Conversation, RevenueRecord
     from backend.app.api.endpoints.appointment import send_email_notification
 
@@ -127,8 +128,16 @@ async def send_daily_digest():
 
             if clinic.phone:
                 send_zns_or_sms(db, clinic.id, clinic.phone, text)
-            owner = db.query(User).filter(User.clinic_id == clinic.id, User.role == "owner").first()
-            if owner:
+            # Every owner, not just the first one found. A clinic can legitimately
+            # have several — co-founders, or a manager folded in from the retired
+            # "admin" role (migration c9d0e1f2a3b4) — and picking .first() silently
+            # left the rest out of the daily numbers.
+            owners = db.query(User).filter(
+                User.clinic_id == clinic.id,
+                User.role == ROLE_OWNER,
+                User.is_active == True,  # noqa: E712
+            ).all()
+            for owner in owners:
                 await send_email_notification(owner.email, "CareDesk AI - Ban tin van hanh", f"<p>{text}</p>")
     except Exception:
         logger.exception("Daily digest failed")

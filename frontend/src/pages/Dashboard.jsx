@@ -100,10 +100,10 @@ export default function Dashboard() {
         const meRes = await fetch(`${API_BASE}/auth/me`, { headers });
         if (meRes.status === 401) throw new Error('Unauthorized');
         const me = await meRes.json();
-        const manager = me.role === 'owner' || me.role === 'admin';
+        const manager = me.role === 'owner';
         setIsManager(manager);
 
-        // Revenue report (this month) - owners/admins only
+        // Revenue report (this month) - owners only
         if (manager) {
           const start = new Date();
           start.setDate(1);
@@ -159,7 +159,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Revenue hero cards (owner/admin) */}
+      {/* Revenue hero cards (owner only) */}
       {isManager && t && (
         <div className="stats-grid">
           <RevenueCard

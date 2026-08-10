@@ -6,6 +6,7 @@ callers stay consistent with the per-clinic Reports screen.
 from datetime import datetime, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from backend.app.core.roles import ROLE_OWNER
 from backend.app.models.models import (
     Clinic, PatientLead, Appointment, Conversation, RevenueRecord, User
 )
@@ -42,8 +43,8 @@ def clinic_metrics(db: Session, clinic: Clinic, since: Optional[datetime] = None
     ).count()
 
     owner = db.query(User).filter(
-        User.clinic_id == clinic.id, User.role == "owner"
-    ).first()
+        User.clinic_id == clinic.id, User.role == ROLE_OWNER
+    ).order_by(User.id).first()
 
     return {
         "clinic_id": clinic.id,
