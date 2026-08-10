@@ -372,6 +372,116 @@ def test_a_real_oa_does_count_as_ready(db, clinic, monkeypatch):
     assert outbound_status(db, clinic.id)["can_reach_phone"] is True
 
 
+# --- the ZBS payload, per Zalo's current API docs ---------------------------
+
+def _zbs_capture(db, clinic, monkeypatch, extra_config):
+    db.add(ChannelIntegration(clinic_id=clinic.id, channel="zalo", enabled=True,
+                              access_token="tok", extra_config=extra_config))
+    db.commit()
+
+    captured = {}
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"error": 0}
+
+    def fake_post(url, json=None, headers=None, **kw):
+        captured["url"] = url
+        captured["body"] = json
+        captured["headers"] = headers
+        return Resp()
+
+    monkeypatch.setattr(channel_gateway.httpx, "post", fake_post)
+    return captured
+
+
+def test_zbs_payload_carries_every_required_field(db, clinic, monkeypatch):
+    """tracking_id is required by ZBS and was missing — the send would simply
+    have been rejected against a real OA."""
+    captured = _zbs_capture(db, clinic, monkeypatch, {"zns_template_id": "abc123"})
+
+    send_zns_or_sms(db, clinic.id, "0987654321", "nhac lich",
+                    tracking_id="caredesk-7-24h",
+                    template_fields={"patient_name": "Nguyen Van A"})
+
+    body = captured["body"]
+    assert captured["url"] == channel_gateway.ZNS_SEND_URL
+    assert set(body) >= {"phone", "template_id", "template_data", "tracking_id"}
+    assert body["template_id"] == "abc123"
+    assert body["tracking_id"] == "caredesk-7-24h"
+    assert captured["headers"]["access_token"] == "tok"
+
+
+def test_the_phone_number_is_country_coded(db, clinic, monkeypatch):
+    """Zalo wants 84987654321. Posting the local 0-prefixed form is a silent
+    per-message rejection."""
+    captured = _zbs_capture(db, clinic, monkeypatch, {"zns_template_id": "abc"})
+    send_zns_or_sms(db, clinic.id, "0987654321", "x")
+    assert captured["body"]["phone"] == "84987654321"
+
+    for given in ("+84987654321", "84987654321", "098 765 4321"):
+        assert channel_gateway.normalize_vn_phone(given) == "84987654321"
+
+
+def test_template_data_uses_the_clinics_own_variable_names(db, clinic, monkeypatch):
+    """A ZBS template has named variables fixed at approval time and no
+    free-text field, so the reminder sentence cannot just be posted across."""
+    captured = _zbs_capture(db, clinic, monkeypatch, {
+        "zns_template_id": "abc",
+        "zns_template_data": {"customer": "{patient_name}",
+                              "thoi_gian": "{time} ngày {date}"},
+    })
+
+    send_zns_or_sms(db, clinic.id, "0987654321", "x", template_fields={
+        "patient_name": "Nguyen Van A", "time": "09:30", "date": "11/08/2026",
+    })
+
+    assert captured["body"]["template_data"] == {
+        "customer": "Nguyen Van A", "thoi_gian": "09:30 ngày 11/08/2026",
+    }
+
+
+def test_an_unknown_template_variable_does_not_kill_the_send(db, clinic, monkeypatch):
+    """A mapping typo should cost one empty field, not every reminder."""
+    captured = _zbs_capture(db, clinic, monkeypatch, {
+        "zns_template_id": "abc",
+        "zns_template_data": {"customer": "{khong_ton_tai}"},
+    })
+
+    result = send_zns_or_sms(db, clinic.id, "0987654321", "x",
+                             template_fields={"patient_name": "A"})
+    assert result.delivered is True
+    assert captured["body"]["template_data"] == {"customer": ""}
+
+
+def test_development_mode_is_declared_in_the_payload(db, clinic, monkeypatch):
+    """zns_sandbox is not just a local label: it selects Zalo's own development
+    mode, which only delivers to an App/OA admin's own number."""
+    captured = _zbs_capture(db, clinic, monkeypatch,
+                            {"zns_template_id": "abc", "zns_sandbox": True})
+
+    result = send_zns_or_sms(db, clinic.id, "0987654321", "x")
+
+    assert captured["body"]["mode"] == "development"
+    assert result.channel == "zns_sandbox"
+    assert result.reached_patient is False
+
+
+def test_production_mode_sends_no_mode_field(db, clinic, monkeypatch):
+    captured = _zbs_capture(db, clinic, monkeypatch, {"zns_template_id": "abc"})
+    result = send_zns_or_sms(db, clinic.id, "0987654321", "x")
+
+    assert "mode" not in captured["body"]
+    assert result.channel == "zns" and result.reached_patient is True
+
+
+def test_a_tracking_id_is_always_present(db, clinic, monkeypatch):
+    """Required by ZBS, so it must never be omitted even by a careless caller."""
+    captured = _zbs_capture(db, clinic, monkeypatch, {"zns_template_id": "abc"})
+    send_zns_or_sms(db, clinic.id, "0987654321", "x")
+    assert captured["body"]["tracking_id"]
+
+
 def test_speedsms_has_no_sandbox_mode(monkeypatch):
     """Unverified, so not implemented: believing messages are suppressed while
     they are in fact sent and billed is worse than having no sandbox at all."""

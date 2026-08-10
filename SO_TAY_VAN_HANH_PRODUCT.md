@@ -117,61 +117,104 @@ không ký được khách, mà không ký được khách thì không xin đư�
 OA Test dùng chung endpoint với OA thật — chỉ khác `access_token` và
 `zns_template_id`, **không cần sửa code**.
 
-> ### ⚠️ Ba điều PHẢI xác nhận với Zalo trước khi lập kế hoạch dựa vào chúng
+> ### 🔴 ZBS là dependency BỊ CHẶN cho tới khi có một OA đã xác thực
 >
-> Những mục dưới đây **chưa được kiểm chứng bằng tài liệu chính thức**. Đừng đưa
-> vào cam kết với khách hàng cho tới khi tự xác nhận tại
-> [developers.zalo.me](https://developers.zalo.me/).
+> Đối chiếu tài liệu chính hành Zalo (bản build 06/08/2026):
 >
-> **1. Điều kiện tạo OA Test / sandbox.** Có nguồn cho rằng OA Test chỉ dùng được
-> sau khi OA đã xác thực và admin nhận email phản hồi từ Zalo. Nếu đúng thì OA
-> Test **không** bỏ qua được bước xác thực (vốn cần giấy phép doanh nghiệp), và
-> toàn bộ kế hoạch "tạm thời dùng OA Test" sẽ không mở được. **Đây là câu hỏi
-> quan trọng nhất — hỏi trước tiên.**
+> - OA có thể **tạo trước**, nhưng phải nộp hồ sơ xác thực trong **14 ngày**;
+>   quá hạn **khoá vĩnh viễn**.
+> - Chính sách ZBS Template Message (cập nhật 09/07/2026) định nghĩa OA dùng cho
+>   dịch vụ này là **"tài khoản xác thực của doanh nghiệp"**, và bước 1 của quy
+>   trình là *"Đăng ký và xác thực tài khoản OA"*.
+> - **Không có** loại tài khoản riêng nào tên "OA Test" trong tài liệu hiện hành.
+>   Cái Zalo cung cấp là **development mode của chính API ZBS** — một chế độ gửi,
+>   không phải một loại tài khoản.
 >
-> **2. OA Test có gửi được tới số bất kỳ không?** Giả thuyết: chỉ gửi tới các số
-> đã đăng ký làm tester. Nếu đúng thì không dùng OA Test để chạy pilot với bệnh
-> nhân thật được. Chưa có nguồn xác nhận.
->
-> **3. Tên gọi dịch vụ.** Theo thông tin hiện có, nhiều trang tài liệu ZNS đã
-> **ngừng cập nhật**, và **từ 01/01/2026 ZNS được hợp nhất vào ZBS Template
-> Message**. Tài liệu này và code vẫn dùng chữ "ZNS" như **tên gọi cũ (legacy)** —
-> xem mục thuật ngữ bên dưới.
+> **Hệ quả:** không có đường vòng nào cho phép một đơn vị chưa có hồ sơ pháp
+> nhân dùng ZBS. Kế hoạch "tạm thời 100% OA Test" **không khả thi**. Coi ZBS là
+> bị chặn cho tới khi ký được phòng khám và dùng pháp nhân của họ.
 
-**Khi dùng OA Test, khai thêm `"zns_sandbox": true`:**
+### Development mode: chỉ gửi được cho chính admin
+
+Tài liệu ZBS ghi nguyên văn: *"Chế độ development chỉ hỗ trợ gửi thử tin qua SĐT
+đến quản trị viên của ứng dụng hoặc quản trị viên của OA."*
+
+Nghĩa là development mode **kiểm chứng được tích hợp, nhưng không chạy được
+pilot** — bệnh nhân thật không nhận được gì. Bật bằng:
 
 ```json
 { "zns_template_id": "...", "zns_sandbox": true }
 ```
 
-Vì sao cần cờ này: hệ thống xác định "tin đã tới bệnh nhân thật hay chưa" **dựa
-trên cờ khai báo, không dựa vào phản hồi của Zalo**. Nếu một OA Test trả về
-thành công giống OA thật (giả thuyết #2 ở trên — chưa xác nhận), thì thiếu cờ
-này CareDesk sẽ tính đó là một lần gửi tới bệnh nhân và tắt cảnh báo trên
-Dashboard. Khai cờ là cách an toàn bất kể Zalo hành xử thế nào — có test khoá
-hành vi này (`tests/test_delivery_honesty.py`).
+Cờ này không chỉ là nhãn nội bộ: nó thêm `"mode": "development"` vào payload gửi
+Zalo, đồng thời giữ `can_reach_phone = false` để Dashboard không báo sẵn sàng.
 
-Cần cả `access_token` **và** `zns_template_id`. Chỉ có OA thôi là chưa đủ — đây
-là lý do phổ biến nhất khiến nhắc lịch im lặng ngừng chạy.
+> Lưu ý cả ở production: ZBS **không phải API broadcast**. Chính sách 09/07/2026
+> quy định người nhận phải là người *"đã giao dịch trước đó với Đối Tác"*, số
+> điện thoại phải gắn với tài khoản Zalo, và Zalo có quyền yêu cầu bằng chứng về
+> quan hệ giao dịch. Với phòng khám thì bệnh nhân đã đặt lịch là hợp lệ — nhưng
+> đừng bán tính năng "gửi hàng loạt cho danh sách số bất kỳ".
+
+### Payload ZBS (đã đối chiếu tài liệu, đã sửa trong code)
+
+```
+POST https://business.openapi.zalo.me/message/template
+access_token: <token>
+```
+
+| Field | Bắt buộc | Ghi chú |
+|---|---|---|
+| `phone` | ✓ | dạng `84987654321` — **không** dùng `0987654321` |
+| `template_id` | ✓ | id template đã duyệt |
+| `template_data` | ✓ | object biến của template; schema khác nhau theo từng template |
+| `tracking_id` | ✓ | id do hệ thống bạn sinh, dùng để đối soát |
+| `sending_mode` | | `1` mặc định; `3` chỉ cho OA được whitelist |
+| `mode` | | `"development"` khi test |
+
+**Ba lỗi trong code đã được sửa nhờ đối chiếu này:** thiếu `tracking_id` (bắt
+buộc), `phone` chưa chuẩn hoá về mã quốc gia, và `template_data` bị hardcode
+thành `{"content": <câu văn>}` — trong khi ZBS **không có trường văn bản tự do**.
+
+### Template có biến riêng, không nhận văn bản tự do
+
+Mỗi template được duyệt có bộ biến riêng (`customer`, `thoi_gian`, ...), nên câu
+nhắc lịch phải được **tách thành từng phần**. Khai ánh xạ trong `extra_config`:
+
+```json
+{
+  "zns_template_id": "7895417a7d3f9461cd2e",
+  "zns_template_data": {
+    "customer":  "{patient_name}",
+    "thoi_gian": "{time} ngày {date}",
+    "dia_chi":   "{branch_address}"
+  }
+}
+```
+
+Các biến dùng được: `patient_name`, `clinic_name`, `branch_name`,
+`branch_address`, `service_name`, `doctor_name`, `date`, `time`, `confirm_url`,
+`cancel_url`.
+
+Không khai ánh xạ thì hệ thống gửi thẳng các biến trên theo đúng tên của chúng —
+chỉ đúng nếu template được viết theo bộ tên này. Gõ sai một biến thì chỉ biến đó
+rỗng và có log cảnh báo, **không làm hỏng cả lượt gửi**.
+
+`tracking_id` sinh theo dạng `caredesk-<appointment_id>-<kind>` — ổn định theo
+từng lời nhắc, nên một lần gửi lại nhận diện được là **cùng một tin**, không phải
+tin mới.
 
 ### Thuật ngữ: "ZNS" trong code là tên gọi cũ
 
-Theo thông tin hiện có, ZNS đã được hợp nhất vào **ZBS Template Message** từ
-01/01/2026. Trong CareDesk, các tên sau **giữ nguyên** vì chúng là khoá lưu trong
-`ChannelIntegration.extra_config` — đổi tên sẽ làm hỏng cấu hình của các phòng
-khám đã kết nối:
+ZNS đã hợp nhất vào **ZBS Template Message** từ 01/01/2026; tài liệu ZNS cũ được
+chính Zalo đánh dấu không còn cập nhật. Các tên `zns_template_id`, `zns_sandbox`,
+`zns_is_configured()` **giữ nguyên** vì là khoá lưu trong
+`ChannelIntegration.extra_config` — đổi tên sẽ làm hỏng cấu hình của phòng khám
+đã kết nối. Đọc "ZNS" ở đây là ZBS Template Message.
 
-| Tên trong code | Nghĩa |
-|---|---|
-| `zns_template_id` | id template đã được Zalo duyệt |
-| `zns_sandbox` | đang trỏ vào OA Test |
-| `zns_is_configured()` | đã đủ điều kiện gửi chưa |
-
-Khi đọc tài liệu Zalo hiện hành, hiểu "ZNS" ở đây là **ZBS Template Message**.
-Nếu Zalo đổi endpoint hoặc định dạng payload, chỗ cần sửa là
-`ZNS_SEND_URL` và `_send` trong
-[channel_gateway.py](backend/app/services/channel_gateway.py) — **cần kiểm tra
-lại endpoint hiện hành trước khi kết nối OA thật đầu tiên.**
+**Endpoint đã xác minh là vẫn đúng** tính tới 10/08/2026. Phần cần kiểm tra khi
+kết nối OA thật đầu tiên không phải URL, mà là: quyền của App, OA đã xác thực
+chưa, template có thuộc ZBS không, và `template_data` có khớp biến của template
+không.
 
 ### Vậy demo cho phòng khám bằng gì khi chưa có OA?
 

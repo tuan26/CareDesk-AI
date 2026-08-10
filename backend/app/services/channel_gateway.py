@@ -11,6 +11,7 @@ the appointment as reminded, so it is never retried once a real channel is
 configured.
 """
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -236,22 +237,75 @@ def zns_is_configured(db: Session, clinic_id: Optional[int]) -> bool:
 
 
 def zns_is_simulated(db: Session, clinic_id: Optional[int]) -> bool:
-    """Is this clinic pointed at a Zalo *Test* OA rather than its real one?
+    """Is this clinic sending in ZBS **development mode**?
 
-    Declared, not detected: ``extra_config = {"zns_sandbox": true}`` alongside
-    the test token.
-
-    We do not know — and have not confirmed against Zalo's documentation —
-    whether a test OA is distinguishable from a real one in the API response.
-    Declaring it is correct either way: if the responses are identical, this is
-    the only thing standing between a test OA and a green dashboard reporting
-    deliveries nobody received; if they are not, the flag simply agrees with
-    reality. The unsafe option is the one that assumes.
+    Set ``extra_config = {"zns_sandbox": true}`` and the send carries
+    ``"mode": "development"``. Per Zalo's ZBS documentation this is a real mode
+    of the same endpoint — not a separate account type — and it will only
+    deliver to the phone number of an App admin or an OA admin. It therefore
+    proves the integration works and proves nothing about reaching patients,
+    which is why it never counts towards can_reach_phone.
     """
     if not clinic_id:
         return False
     integration = get_integration(db, clinic_id, "zalo")
     return bool(integration and (integration.extra_config or {}).get("zns_sandbox"))
+
+
+def normalize_vn_phone(phone: str) -> str:
+    """Local Vietnamese number -> the country-coded form ZBS expects.
+
+    Zalo's examples: 0987654321 or +84987654321 -> 84987654321. Sending the
+    leading-zero local form is a silent per-message failure, so this is applied
+    at the boundary rather than trusted to whoever typed the number in.
+    """
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit() or ch == "+")
+    digits = digits.lstrip("+")
+    if digits.startswith("84"):
+        return digits
+    return "84" + digits.lstrip("0")
+
+
+#: Facts a reminder can offer a ZBS template. Clinics map their own template's
+#: variable names onto these — every approved template has different ones, so
+#: there is no fixed payload we could hardcode.
+TEMPLATE_FIELDS_DOC = (
+    "patient_name, clinic_name, branch_name, branch_address, service_name, "
+    "doctor_name, date, time, confirm_url, cancel_url"
+)
+
+
+def _zbs_template_data(integration, fields: dict) -> dict:
+    """Build `template_data` for this clinic's approved template.
+
+    ZBS templates carry named variables ("customer", "thoi_gian", ...) chosen
+    when the template was approved, and the payload must use exactly those
+    names. There is no free-text field, so the reminder's sentence cannot simply
+    be posted across — it has to be decomposed into the template's variables.
+
+    Two ways to configure it:
+
+    * ``zns_template_data`` maps the template's variable names onto format
+      strings over the fields above, e.g.
+      ``{"customer": "{patient_name}", "thoi_gian": "{time} ngày {date}"}``
+    * nothing configured -> the fields are sent under their own names, which
+      works if the template was written using them.
+    """
+    mapping = (integration.extra_config or {}).get("zns_template_data")
+    if not mapping:
+        return {k: str(v) for k, v in fields.items() if v is not None}
+
+    out = {}
+    for var, template in mapping.items():
+        try:
+            out[var] = str(template).format(**fields)
+        except KeyError as exc:
+            logger.error(
+                "Template ZBS dùng biến %s không có trong dữ liệu nhắc lịch. "
+                "Các biến dùng được: %s", exc, TEMPLATE_FIELDS_DOC,
+            )
+            out[var] = ""
+    return out
 
 
 def outbound_status(db: Session, clinic_id: Optional[int]) -> dict:
@@ -281,8 +335,15 @@ def outbound_status(db: Session, clinic_id: Optional[int]) -> dict:
     }
 
 
-def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str) -> Delivery:
-    """Send to a phone number: Zalo ZNS first, then SMS.
+def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str,
+                    tracking_id: Optional[str] = None,
+                    template_fields: Optional[dict] = None) -> Delivery:
+    """Send to a phone number: Zalo ZBS template message first, then SMS.
+
+    `text` is the plain sentence, used by SMS. `template_fields` carries the same
+    information decomposed into named facts, because ZBS has no free-text field —
+    see _zbs_template_data. `tracking_id` is required by ZBS and is what lets a
+    delivery be reconciled with the reminder that produced it.
 
     Returns a Delivery whose `delivered` is False when nothing left the process.
     Never claim a send that did not happen — see the module docstring.
@@ -290,29 +351,39 @@ def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str
     if zns_is_configured(db, clinic_id):
         integration = get_integration(db, clinic_id, "zalo")
         template_id = (integration.extra_config or {}).get("zns_template_id")
+        simulated = zns_is_simulated(db, clinic_id)
+
+        payload = {
+            "phone": normalize_vn_phone(phone),
+            "template_id": template_id,
+            "template_data": _zbs_template_data(integration, template_fields or {"content": text}),
+            # Required by ZBS. Generated when the caller has nothing better, but
+            # callers should pass one so a Zalo-side record maps back to a row.
+            "tracking_id": tracking_id or f"caredesk-{uuid.uuid4().hex[:16]}",
+        }
+        if simulated:
+            # Zalo's own development mode: same endpoint, delivers only to the
+            # App admin's or OA admin's own number.
+            payload["mode"] = "development"
+
         try:
             resp = httpx.post(
                 ZNS_SEND_URL,
                 headers={"access_token": integration.access_token, "Content-Type": "application/json"},
-                json={"phone": phone, "template_id": template_id,
-                      "template_data": {"content": text}},
+                json=payload,
                 timeout=15,
             )
             if resp.status_code == 200 and resp.json().get("error", 0) == 0:
-                # A Zalo Test OA answers identically to a real one, so whether a
-                # patient was actually reached comes from the declared flag, not
-                # from the response.
-                simulated = zns_is_simulated(db, clinic_id)
                 return Delivery("zns_sandbox" if simulated else "zns", True,
                                 reached_patient=not simulated)
-            logger.error("ZNS send failed for clinic %s: %s", clinic_id, resp.text[:300])
+            logger.error("ZBS send failed for clinic %s: %s", clinic_id, resp.text[:300])
         except Exception as exc:
-            logger.exception("ZNS send failed for clinic %s", clinic_id)
-            return _try_sms(phone, text, fallback_detail=f"ZNS lỗi: {exc}")
+            logger.exception("ZBS send failed for clinic %s", clinic_id)
+            return _try_sms(phone, text, fallback_detail=f"Zalo lỗi: {exc}")
 
         # Zalo looked at the message and refused it: a retry gets the same
         # answer, so do not let this one bounce around the scheduler forever.
-        return _try_sms(phone, text, fallback_detail="ZNS bị từ chối", retryable=False)
+        return _try_sms(phone, text, fallback_detail="Zalo từ chối tin", retryable=False)
 
     return _try_sms(phone, text, fallback_detail="Phòng khám chưa cấu hình Zalo ZNS")
 

@@ -33,6 +33,37 @@ def verify_public_token(appointment_id: int, token: str) -> bool:
     return hmac.compare_digest(make_public_token(appointment_id), token or "")
 
 
+def build_reminder_fields(appt: Appointment) -> dict:
+    """The reminder decomposed into named facts.
+
+    SMS takes a sentence; a ZBS template takes named variables and has no
+    free-text field at all, so the same information has to be available in
+    pieces. The clinic maps its own approved template's variable names onto
+    these — see channel_gateway.TEMPLATE_FIELDS_DOC.
+    """
+    token = make_public_token(appt.id)
+    base = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_STR}/public/appointments/{appt.id}"
+    return {
+        "patient_name": appt.patient.full_name if appt.patient else "",
+        "clinic_name": appt.branch.clinic.name if appt.branch and appt.branch.clinic else "",
+        "branch_name": appt.branch.name if appt.branch else "",
+        "branch_address": appt.branch.address if appt.branch else "",
+        "service_name": appt.service.name if appt.service else "",
+        "doctor_name": appt.doctor.name if appt.doctor else "",
+        "date": appt.start_time.strftime("%d/%m/%Y"),
+        "time": appt.start_time.strftime("%H:%M"),
+        "confirm_url": f"{base}/confirm?token={token}",
+        "cancel_url": f"{base}/cancel?token={token}",
+    }
+
+
+def reminder_tracking_id(appt: Appointment, kind: str) -> str:
+    """Required by ZBS, and the only way a delivery record on Zalo's side maps
+    back to the row that produced it. Stable per (appointment, kind) so a retry
+    is recognisable as the same message rather than a new one."""
+    return f"caredesk-{appt.id}-{kind}"
+
+
 def build_reminder_text(appt: Appointment, kind: str) -> str:
     time_str = appt.start_time.strftime("%H:%M ngày %d/%m/%Y")
     when = "ngày mai" if kind == "24h" else "sắp tới trong 2 giờ nữa"
@@ -127,7 +158,11 @@ async def check_and_send_reminders():
                 if patient.phone:
                     entry = _open_outbox_entry(db, appt.id, kind, "phone")
                     if entry is not None:
-                        result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
+                        result = send_zns_or_sms(
+                            db, appt.clinic_id, patient.phone, text,
+                            tracking_id=reminder_tracking_id(appt, kind),
+                            template_fields=build_reminder_fields(appt),
+                        )
                         _record(entry, result.delivered, result.channel, result.detail,
                                 attempted=result.attempted, retryable=result.retryable)
                         sent_count += result.delivered

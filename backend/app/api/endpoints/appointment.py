@@ -357,7 +357,9 @@ async def send_appointment_reminder(
     "nhắc lịch" needs to be told whether it actually went out, and a background
     task cannot report that back.
     """
-    from backend.app.services.reminder import build_reminder_text
+    from backend.app.services.reminder import (
+        build_reminder_fields, build_reminder_text, reminder_tracking_id,
+    )
     from backend.app.services.channel_gateway import send_zns_or_sms
     from backend.app.models.models import ReminderLog
 
@@ -375,7 +377,11 @@ async def send_appointment_reminder(
     text = build_reminder_text(appt, "manual")
 
     if patient.phone:
-        result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
+        result = send_zns_or_sms(
+            db, appt.clinic_id, patient.phone, text,
+            tracking_id=reminder_tracking_id(appt, "manual"),
+            template_fields=build_reminder_fields(appt),
+        )
         if result.delivered:
             db.add(ReminderLog(appointment_id=appt.id, kind="manual", medium="phone",
                                channel=result.channel, status="sent", attempts=1))
