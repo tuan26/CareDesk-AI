@@ -390,10 +390,29 @@ def get_readiness(
         blockers.append({"code": "no_schedule", "severity": "critical",
                          "message": "Chưa có lịch làm việc — AI không thể chốt được lịch hẹn nào.",
                          "action": "/doctors"})
-    if not channels["can_reach_phone"]:
+    # Phone channel. A simulated one (Zalo Test OA, SMS sandbox/mock) gets its
+    # own message rather than the generic "not configured": the integration IS
+    # working, which is a different problem from nothing being set up, and the
+    # difference decides what the clinic should do next.
+    if channels.get("zns_simulated") or channels.get("sms_simulated"):
+        blockers.append({
+            "code": "simulated_channel", "severity": "critical",
+            "message": "Đang chạy kênh THỬ NGHIỆM (Zalo OA Test / SMS sandbox). "
+                       "Tích hợp hoạt động, nhưng tin nhắn KHÔNG tới bệnh nhân thật. "
+                       "Phải chuyển sang OA thật hoặc SMS thật trước khi nhận khách.",
+            "action": "/settings"})
+    elif not channels["can_reach_phone"]:
+        message = ("Chưa kết nối Zalo ZNS hoặc SMS — tin nhắn nhắc lịch KHÔNG "
+                   "được gửi đi.")
+        if channels["email"]:
+            # Email works, so reminders are not entirely dead — but saying
+            # "reminders are on" here would be misleading: Vietnamese patients
+            # overwhelmingly do not read email appointment reminders.
+            message = ("Mới chỉ nhắc lịch được qua email. Chưa kết nối Zalo ZNS "
+                       "hoặc SMS, mà phần lớn bệnh nhân không đọc email nhắc lịch.")
         blockers.append({"code": "no_phone_channel", "severity": "critical",
-                         "message": "Chưa kết nối Zalo ZNS hoặc SMS — tin nhắn nhắc lịch KHÔNG được gửi đi.",
-                         "action": "/settings"})
+                         "message": message, "action": "/settings"})
+
     if not channels["email"]:
         blockers.append({"code": "no_email", "severity": "warning",
                          "message": "Chưa cấu hình email — không gửi được xác nhận qua email.",

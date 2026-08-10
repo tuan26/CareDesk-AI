@@ -142,6 +142,41 @@ def test_the_baseline_does_not_block_going_live(db, fresh):
     assert status["can_go_live"] is True
 
 
+def test_a_simulated_channel_is_called_out_as_such(db, fresh, monkeypatch):
+    """"Integration works but nothing reaches a patient" is a different problem
+    from "nothing is set up", and it needs a different instruction. CareDesk has
+    no business licence of its own, so a test OA is where every pilot starts —
+    and this is the warning that stops one shipping in that state."""
+    from backend.app.api.endpoints.clinic import get_readiness
+    from backend.app.services import channel_gateway
+
+    clinic, owner = fresh
+    _finish_setup(db, clinic)
+    monkeypatch.setattr(channel_gateway.settings, "SMS_PROVIDER", "mock", raising=False)
+
+    codes = {b["code"]: b for b in get_readiness(db=db, current_user=owner)["blockers"]}
+    assert "simulated_channel" in codes
+    assert codes["simulated_channel"]["severity"] == "critical"
+    assert "KHÔNG tới bệnh nhân thật" in codes["simulated_channel"]["message"]
+    assert "no_phone_channel" not in codes, "một vấn đề, một cảnh báo"
+
+
+def test_email_only_is_reported_honestly(db, fresh, monkeypatch):
+    """Not "reminders are on" — Vietnamese patients do not read email reminders."""
+    from backend.app.api.endpoints.clinic import get_readiness
+    from backend.app.services import channel_gateway
+
+    clinic, owner = fresh
+    _finish_setup(db, clinic)
+    monkeypatch.setattr(channel_gateway.settings, "SMS_PROVIDER", "", raising=False)
+    monkeypatch.setattr(channel_gateway.settings, "SMTP_USER", "u", raising=False)
+    monkeypatch.setattr(channel_gateway.settings, "SMTP_PASSWORD", "p", raising=False)
+
+    codes = {b["code"]: b for b in get_readiness(db=db, current_user=owner)["blockers"]}
+    assert codes["no_phone_channel"]["severity"] == "critical"
+    assert "qua email" in codes["no_phone_channel"]["message"]
+
+
 def test_an_impossible_baseline_is_refused(db, fresh):
     """A no-show rate over 100% means a typo, and a wrong baseline is worse than
     none — every later comparison inherits it."""

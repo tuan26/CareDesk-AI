@@ -93,14 +93,69 @@ dạng payload thật lẫn đường xử lý lỗi thật, những thứ mock 
 > thực tế nó vẫn gửi và vẫn tính tiền thì còn tệ hơn là không có sandbox. Muốn
 > test thì dùng `mock` hoặc eSMS sandbox.
 
-**Zalo:** OA Test dùng chung endpoint với OA thật — chỉ khác `access_token` và
-`zns_template_id`, nên **không cần sửa code**, chỉ điền cấu hình khác trong
-**Cài đặt → Kênh kết nối**. Lưu ý theo tài liệu Zalo, OA Test chỉ dùng được sau
-khi OA đã xác thực và admin nhận được email phản hồi — nên nó rút ngắn phần tích
-hợp, chứ không bỏ được bước xác thực OA.
+### Zalo: kênh thuộc về phòng khám, không thuộc về CareDesk
+
+Đây là điểm quan trọng nhất của cả mục này, và nó xuất phát từ một ràng buộc
+thực tế: **CareDesk không có giấy phép doanh nghiệp riêng**, nên không tự xin
+được OA.
+
+Nhưng đó không phải vấn đề cần khắc phục — nó là **kiến trúc đúng**:
+
+- OA và brandname phải mang thương hiệu **phòng khám**, không phải "CareDesk".
+  Bệnh nhân nhận tin nhắn từ phòng khám họ đã đặt lịch, không phải từ một nhà
+  cung cấp phần mềm họ chưa từng nghe tên.
+- Giấy phép kinh doanh dùng để xác thực OA là **của phòng khám**.
+- Chi phí ZNS tính trên OA của phòng khám.
+- Code đã làm đúng như vậy từ đầu: `ChannelIntegration` gắn theo `clinic_id`,
+  mỗi phòng khám có token và template riêng.
+
+**Hệ quả về thời gian:** đồng hồ Zalo **bắt đầu chạy từ lúc ký được phòng khám**,
+không phải trước đó. Nghĩa là **quy trình bán hàng và demo tuyệt đối không được
+phụ thuộc vào ZNS chạy thật** — nếu không bạn sẽ kẹt ở thế không demo được nên
+không ký được khách, mà không ký được khách thì không xin được OA.
+
+OA Test dùng chung endpoint với OA thật — chỉ khác `access_token` và
+`zns_template_id`, **không cần sửa code**. Nhưng theo tài liệu Zalo, OA Test chỉ
+dùng được **sau khi** OA đã xác thực và admin nhận email phản hồi. Nên OA Test
+rút ngắn vòng lặp debug tích hợp, **không** bỏ được bước xác thực.
+
+> **Khi dùng OA Test, bắt buộc khai `"zns_sandbox": true`:**
+> ```json
+> { "zns_template_id": "...", "zns_sandbox": true }
+> ```
+> OA Test trả lời **y hệt** OA thật — không có gì trong phản hồi cho biết không
+> ai nhận được tin. Thiếu cờ này, hệ thống sẽ báo là đã gửi tới bệnh nhân và
+> Dashboard chuyển xanh trong khi thực tế không ai nhận được gì.
+>
+> Cần xác nhận thêm với Zalo: theo tôi biết OA Test thường **chỉ gửi tới số đã
+> đăng ký làm tester**, không gửi tự do. Nếu đúng thì không thể dùng OA Test để
+> chạy pilot với bệnh nhân thật.
 
 Cần cả `access_token` **và** `zns_template_id`. Chỉ có OA thôi là chưa đủ — đây
 là lý do phổ biến nhất khiến nhắc lịch im lặng ngừng chạy.
+
+### Vậy demo cho phòng khám bằng gì khi chưa có OA?
+
+Trước khi ký được khách đầu tiên, bạn có **email** — và chỉ cần một tài khoản
+Gmail với app password, không cần giấy tờ gì:
+
+```bash
+SMTP_USER=ban@gmail.com
+SMTP_PASSWORD=<app password 16 ký tự>
+```
+
+Email là kênh **thật, chạy được ngay hôm nay**: bệnh nhân nhận thư có link xác
+nhận/huỷ hoạt động đầy đủ. Đủ để demo trọn vòng cho chủ phòng khám xem — gửi vào
+chính email của họ trong buổi demo là thuyết phục nhất.
+
+Hệ thống nói đúng về giới hạn này: khi chỉ có email, Dashboard hiện *"Mới chỉ
+nhắc lịch được qua email — phần lớn bệnh nhân không đọc email nhắc lịch"* chứ
+không báo là nhắc lịch đã sẵn sàng.
+
+Và khi đang chạy kênh thử nghiệm (OA Test hoặc SMS sandbox/mock), cảnh báo đổi
+thành *"Đang chạy kênh THỬ NGHIỆM — tích hợp hoạt động, nhưng tin nhắn KHÔNG tới
+bệnh nhân thật"*. Đây là cảnh báo giữ cho một pilot không vô tình khởi động ở
+trạng thái đó.
 
 ### Chốt chặn: production không được dùng đồ giả
 
