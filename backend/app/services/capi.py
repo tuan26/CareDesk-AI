@@ -10,12 +10,17 @@ import httpx
 from typing import Optional
 from sqlalchemy.orm import Session
 from backend.app.services.channel_gateway import get_integration
+from backend.app.services.features import FACEBOOK_CAPI, is_enabled
 
 
 def send_capi_event(db: Session, clinic_id: Optional[int], event_name: str,
                     phone: Optional[str] = None, value: float = 0.0, external_id: Optional[str] = None):
     """event_name: 'Schedule' (booked) | 'Purchase' (deposit/package paid)."""
     if not clinic_id:
+        return
+    # Off by default: only a clinic actually running paid ads gets value from
+    # this, and it silently ships patient phone hashes to Meta otherwise.
+    if not is_enabled(db, clinic_id, FACEBOOK_CAPI):
         return
     integration = get_integration(db, clinic_id, "facebook")
     cfg = (integration.extra_config or {}) if integration else {}

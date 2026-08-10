@@ -5,12 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import verify_receptionist_or_above
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
-from backend.app.models.models import Appointment, BookingRequest, Branch, Doctor, Service, User
+from backend.app.models.models import (
+    Appointment, BookingRequest, Branch, Clinic, Doctor, Service, User,
+)
 from backend.app.schemas.schemas import AppointmentCreate, AppointmentOut, BookingRequestOut, BookingRequestStatusUpdate
 from backend.app.services.ai_engine import get_available_slots
 from backend.app.services.audit import log_action
-from backend.app.services.events import emit_event
+from backend.app.services.events import deliver_to_patient, emit_event
+from backend.app.services.payment_gateway import hold_for_deposit
 
 router = APIRouter()
 
@@ -75,6 +79,19 @@ def convert_booking_request(
     )
     db.add(appointment)
     db.flush()
+
+    # Deposits apply to bookings that came in through chat, not to a walk-in the
+    # receptionist types up. If the clinic collects one, the slot is held rather
+    # than confirmed, and the patient is sent the link in their own chat thread.
+    clinic = db.query(Clinic).filter(Clinic.id == request.clinic_id).first()
+    payment, pay_url = hold_for_deposit(db, appointment, clinic)
+    if pay_url and request.patient:
+        deliver_to_patient(db, request.patient, (
+            f"Để giữ chỗ khung giờ này, bạn vui lòng đặt cọc "
+            f"{payment.amount:,.0f}đ trong {settings.DEPOSIT_HOLD_MINUTES} phút: {pay_url}\n"
+            f"Quá thời gian trên, hệ thống sẽ tự nhả chỗ cho khách khác."
+        ))
+
     request.status = "converted"
     emit_event(db, request.clinic_id, "appointment_created", patient_id=request.patient_id,
                payload={"appointment_id": appointment.id, "booking_request_id": request.id,

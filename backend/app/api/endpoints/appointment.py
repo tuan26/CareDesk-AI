@@ -1,3 +1,4 @@
+import logging
 from typing import Any, List, Optional
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -18,6 +19,8 @@ from backend.app.schemas.schemas import (
 from backend.app.services.ai_engine import get_available_slots
 from backend.app.services.audit import log_action
 from backend.app.services.events import emit_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -87,16 +90,14 @@ def _check_same_clinic(obj_clinic_id, user: User):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dữ liệu không thuộc phòng khám của bạn.")
 
 
-async def send_email_notification(to_email: str, subject: str, html_content: str):
-    """
-    Sends an async email using configuration from settings.
-    Falls back to print log if credentials are not configured.
-    """
+async def send_email_notification(to_email: str, subject: str, html_content: str) -> bool:
+    """Send one email. Returns True only if it was actually accepted by the SMTP
+    server, so callers can tell a real delivery from an unconfigured mailbox and
+    avoid recording a delivery that never happened."""
     if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
-        print(f"[MOCK EMAIL] Gửi tới {to_email}")
-        print(f"[MOCK EMAIL] Chủ đề: {subject}")
-        print(f"[MOCK EMAIL] Nội dung: {html_content[:200]}...")
-        return
+        logger.warning("SMTP chưa cấu hình - email tới %s KHÔNG được gửi (%s)",
+                       to_email, subject)
+        return False
 
     message = MIMEMultipart("alternative")
     message["From"] = f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
@@ -114,9 +115,11 @@ async def send_email_notification(to_email: str, subject: str, html_content: str
             use_tls=True if settings.SMTP_PORT == 465 else False,
             start_tls=True if settings.SMTP_PORT == 587 else False
         )
-        print(f"[EMAIL] Đã gửi thư thành công tới {to_email}")
-    except Exception as e:
-        print(f"[EMAIL ERROR] Không thể gửi email tới {to_email}: {e}")
+        logger.info("Đã gửi email tới %s", to_email)
+        return True
+    except Exception:
+        logger.exception("Không gửi được email tới %s", to_email)
+        return False
 
 
 # --- PATIENT LEADS (mini-CRM; declared before /{appt_id} routes) ---
@@ -342,14 +345,17 @@ def update_appointment(
 
 
 @router.post("/{appt_id}/remind")
-def send_appointment_reminder(
+async def send_appointment_reminder(
     appt_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(verify_receptionist_or_above)
 ) -> Any:
     """
     Manually trigger a reminder (email + ZNS/SMS) for a specific appointment.
+
+    Sends inline rather than in a background task: a receptionist who clicks
+    "nhắc lịch" needs to be told whether it actually went out, and a background
+    task cannot report that back.
     """
     from backend.app.services.reminder import build_reminder_text
     from backend.app.services.channel_gateway import send_zns_or_sms
@@ -365,12 +371,16 @@ def send_appointment_reminder(
         raise HTTPException(status_code=400, detail="Khách hàng không có email hoặc SĐT để nhận nhắc lịch.")
 
     sent_channels = []
+    failures = []
     text = build_reminder_text(appt, "manual")
 
     if patient.phone:
-        channel = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
-        db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel=channel))
-        sent_channels.append(channel.upper())
+        result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
+        if result.delivered:
+            db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel=result.channel))
+            sent_channels.append(result.channel.upper())
+        else:
+            failures.append(result.detail or "không gửi được tin tới số điện thoại")
 
     if patient.email:
         time_str = appt.start_time.strftime("%d/%m/%Y lúc %H:%M")
@@ -387,18 +397,29 @@ def send_appointment_reminder(
         <p>Địa chỉ: {appt.branch.address}</p>
         <p>Vui lòng đến trước 10 phút để chuẩn bị. Trân trọng cảm ơn!</p>
         """
-        background_tasks.add_task(
-            send_email_notification,
-            patient.email,
-            "CareDesk AI - Nhắc lịch hẹn khám",
-            html
-        )
-        db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel="email"))
-        sent_channels.append("EMAIL")
+        if await send_email_notification(
+            patient.email, "CareDesk AI - Nhắc lịch hẹn khám", html
+        ):
+            db.add(ReminderLog(appointment_id=appt.id, kind="manual", channel="email"))
+            sent_channels.append("EMAIL")
+        else:
+            failures.append("email chưa cấu hình hoặc gửi lỗi")
 
     log_action(db, current_user.id, "send_reminder", f"Nhắc lịch thủ công cho lịch hẹn #{appt.id}")
     db.commit()
-    return {"status": "success", "message": f"Đã gửi nhắc lịch qua: {', '.join(sent_channels)}"}
+
+    if not sent_channels:
+        # 502, not 200: nothing reached the patient. Reporting success here is
+        # how staff end up believing a patient was reminded when they were not.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Chưa gửi được nhắc lịch. " + "; ".join(failures) +
+                   ". Vào Cài đặt để kết nối Zalo ZNS hoặc SMS.",
+        )
+    msg = f"Đã gửi nhắc lịch qua: {', '.join(sent_channels)}"
+    if failures:
+        msg += f" (chưa gửi được: {'; '.join(failures)})"
+    return {"status": "success", "message": msg}
 
 
 @router.delete("/{appt_id}", status_code=status.HTTP_204_NO_CONTENT)

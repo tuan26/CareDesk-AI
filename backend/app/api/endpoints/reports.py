@@ -134,8 +134,24 @@ def get_report_summary(
         for p in active_packages if p.sessions_total
     )
 
+    # The two numbers the product is sold on, next to what the clinic said they
+    # were before signing up. A percentage with nothing to compare it to cannot
+    # answer "what did I get for my money" at renewal time.
+    baseline = None
+    if clinic and clinic.baseline_captured_at:
+        days = max((end_date - start_date).days + 1, 1)
+        per_month = len(appointments) / days * 30
+        baseline = {
+            "captured_at": clinic.baseline_captured_at.isoformat(),
+            "monthly_bookings_before": clinic.baseline_monthly_bookings,
+            "monthly_bookings_now": round(per_month, 1),
+            "no_show_percent_before": clinic.baseline_no_show_percent,
+            "no_show_percent_now": no_show_rate,
+        }
+
     return {
         "range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "baseline": baseline,
         "totals": {
             "appointments": len(appointments),
             "conversations": total_convs,

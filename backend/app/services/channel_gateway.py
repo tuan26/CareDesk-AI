@@ -1,16 +1,52 @@
 """
 Outbound message gateway for external channels (Zalo OA, Facebook Messenger, ZNS, SMS).
-Every sender degrades gracefully to a console mock when credentials are missing,
-so the whole product remains demo-able without real accounts.
+
+Senders still degrade to a console mock when credentials are missing, so the
+product stays demo-able without real accounts — but a mock **must never be
+reported as a delivery**. Callers get a `Delivery` telling them whether the
+message actually left the building; the reminder scheduler uses that to decide
+whether to write a ReminderLog. Getting this wrong is worse than failing
+outright: a mock recorded as "sent" both hides the outage and permanently marks
+the appointment as reminded, so it is never retried once a real channel is
+configured.
 """
-import httpx
+import logging
+from dataclasses import dataclass
 from typing import Optional
+
+import httpx
 from sqlalchemy.orm import Session
+
 from backend.app.core.config import settings
 from backend.app.models.models import ChannelIntegration
 
+logger = logging.getLogger(__name__)
+
 ZALO_SEND_URL = "https://openapi.zalo.me/v3.0/oa/message/cs"
+ZNS_SEND_URL = "https://business.openapi.zalo.me/message/template"
 FB_SEND_URL = "https://graph.facebook.com/v19.0/me/messages"
+
+# Vietnamese SMS providers. Both are transactional-SMS gateways requiring a
+# registered brandname; pick one with settings.SMS_PROVIDER.
+ESMS_URL = "https://rest.esms.vn/MainService.svc/json/SendMultipleMessage_V4_post_json/"
+SPEEDSMS_URL = "https://api.speedsms.vn/index.php/sms/send"
+
+CHANNEL_NONE = "none"
+
+
+@dataclass(frozen=True)
+class Delivery:
+    """Outcome of one outbound send.
+
+    `delivered` is the only field callers should branch on. `channel` says which
+    route was used ("zns", "sms") or CHANNEL_NONE when nothing was actually sent.
+    """
+    channel: str
+    delivered: bool
+    detail: str = ""
+
+    def __bool__(self) -> bool:
+        return self.delivered
 
 
 def get_integration(db: Session, clinic_id: int, channel: str) -> Optional[ChannelIntegration]:
@@ -23,8 +59,8 @@ def get_integration(db: Session, clinic_id: int, channel: str) -> Optional[Chann
 def send_zalo_message(db: Session, clinic_id: int, zalo_user_id: str, text: str) -> bool:
     integration = get_integration(db, clinic_id, "zalo")
     if not integration or not integration.enabled or not integration.access_token:
-        print(f"[MOCK ZALO] -> user {zalo_user_id}: {text[:120]}")
-        return True
+        logger.warning("Zalo not configured for clinic %s - reply not delivered", clinic_id)
+        return False
     try:
         resp = httpx.post(
             ZALO_SEND_URL,
@@ -34,18 +70,18 @@ def send_zalo_message(db: Session, clinic_id: int, zalo_user_id: str, text: str)
         )
         ok = resp.status_code == 200 and resp.json().get("error", 0) == 0
         if not ok:
-            print(f"[ZALO ERROR] {resp.text[:300]}")
+            logger.error("Zalo send failed: %s", resp.text[:300])
         return ok
-    except Exception as e:
-        print(f"[ZALO ERROR] {e}")
+    except Exception:
+        logger.exception("Zalo send failed")
         return False
 
 
 def send_facebook_message(db: Session, clinic_id: int, psid: str, text: str) -> bool:
     integration = get_integration(db, clinic_id, "facebook")
     if not integration or not integration.enabled or not integration.access_token:
-        print(f"[MOCK FACEBOOK] -> PSID {psid}: {text[:120]}")
-        return True
+        logger.warning("Facebook not configured for clinic %s - reply not delivered", clinic_id)
+        return False
     try:
         resp = httpx.post(
             FB_SEND_URL,
@@ -58,45 +94,136 @@ def send_facebook_message(db: Session, clinic_id: int, psid: str, text: str) -> 
             timeout=10
         )
         if resp.status_code != 200:
-            print(f"[FACEBOOK ERROR] {resp.text[:300]}")
+            logger.error("Facebook send failed: %s", resp.text[:300])
         return resp.status_code == 200
-    except Exception as e:
-        print(f"[FACEBOOK ERROR] {e}")
+    except Exception:
+        logger.exception("Facebook send failed")
         return False
 
 
-def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str) -> str:
+# --- SMS providers -----------------------------------------------------------
+# Each returns True only on a confirmed accept from the provider. Both are
+# ready to use: set SMS_PROVIDER + the credentials and they go live with no
+# code change.
+
+def _send_esms(phone: str, text: str) -> bool:
+    """eSMS.vn. SmsType 2 = branded transactional SMS."""
+    resp = httpx.post(ESMS_URL, json={
+        "ApiKey": settings.SMS_API_KEY,
+        "SecretKey": settings.SMS_SECRET_KEY,
+        "Brandname": settings.SMS_BRANDNAME,
+        "Phone": phone,
+        "Content": text,
+        "SmsType": "2",
+    }, timeout=15)
+    resp.raise_for_status()
+    body = resp.json()
+    # eSMS answers 100 on success and puts the reason in ErrorMessage otherwise.
+    if str(body.get("CodeResult")) != "100":
+        logger.error("eSMS rejected the message: %s", str(body)[:300])
+        return False
+    return True
+
+
+def _send_speedsms(phone: str, text: str) -> bool:
+    """SpeedSMS.vn. type 3 = branded transactional SMS; auth is the API token as
+    the basic-auth username with any password."""
+    resp = httpx.post(
+        SPEEDSMS_URL,
+        json={"to": [phone], "content": text, "type": 3, "sender": settings.SMS_BRANDNAME},
+        auth=(settings.SMS_API_KEY, "x"),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    if body.get("status") != "success":
+        logger.error("SpeedSMS rejected the message: %s", str(body)[:300])
+        return False
+    return True
+
+
+_SMS_PROVIDERS = {"esms": _send_esms, "speedsms": _send_speedsms}
+
+
+def sms_is_configured() -> bool:
+    return bool(settings.SMS_PROVIDER and settings.SMS_API_KEY
+                and settings.SMS_PROVIDER in _SMS_PROVIDERS)
+
+
+def zns_is_configured(db: Session, clinic_id: Optional[int]) -> bool:
+    """ZNS needs an authorised OA *and* a Zalo-approved template id. Having the
+    OA alone is not enough, which is the usual reason reminders silently stop."""
+    if not clinic_id:
+        return False
+    integration = get_integration(db, clinic_id, "zalo")
+    return bool(
+        integration and integration.enabled and integration.access_token
+        and (integration.extra_config or {}).get("zns_template_id")
+    )
+
+
+def outbound_status(db: Session, clinic_id: Optional[int]) -> dict:
+    """What this clinic can actually reach a patient's phone with.
+
+    Surfaced on the dashboard: a clinic with no phone channel gets no appointment
+    reminders at all, which is half the product's promise, and there is otherwise
+    nothing on screen to tell them.
     """
-    Send an appointment reminder to a phone number.
-    Priority: Zalo ZNS (if clinic has Zalo integration) -> SMS gateway -> console mock.
-    Returns the channel actually used.
+    zns = zns_is_configured(db, clinic_id)
+    sms = sms_is_configured()
+    return {
+        "zns": zns,
+        "sms": sms,
+        "email": bool(settings.SMTP_USER and settings.SMTP_PASSWORD),
+        "can_reach_phone": zns or sms,
+    }
+
+
+def send_zns_or_sms(db: Session, clinic_id: Optional[int], phone: str, text: str) -> Delivery:
+    """Send to a phone number: Zalo ZNS first, then SMS.
+
+    Returns a Delivery whose `delivered` is False when nothing left the process.
+    Never claim a send that did not happen — see the module docstring.
     """
-    if clinic_id:
+    if zns_is_configured(db, clinic_id):
         integration = get_integration(db, clinic_id, "zalo")
-        if integration and integration.enabled and integration.access_token:
-            # Real ZNS requires a pre-approved template; template id lives in extra_config.
-            template_id = (integration.extra_config or {}).get("zns_template_id")
-            if template_id:
-                try:
-                    resp = httpx.post(
-                        "https://business.openapi.zalo.me/message/template",
-                        headers={"access_token": integration.access_token, "Content-Type": "application/json"},
-                        json={"phone": phone, "template_id": template_id, "template_data": {"content": text}},
-                        timeout=10
-                    )
-                    if resp.status_code == 200 and resp.json().get("error", 0) == 0:
-                        return "zns"
-                    print(f"[ZNS ERROR] {resp.text[:300]}")
-                except Exception as e:
-                    print(f"[ZNS ERROR] {e}")
+        template_id = (integration.extra_config or {}).get("zns_template_id")
+        try:
+            resp = httpx.post(
+                ZNS_SEND_URL,
+                headers={"access_token": integration.access_token, "Content-Type": "application/json"},
+                json={"phone": phone, "template_id": template_id,
+                      "template_data": {"content": text}},
+                timeout=15,
+            )
+            if resp.status_code == 200 and resp.json().get("error", 0) == 0:
+                return Delivery("zns", True)
+            logger.error("ZNS send failed for clinic %s: %s", clinic_id, resp.text[:300])
+        except Exception as exc:
+            logger.exception("ZNS send failed for clinic %s", clinic_id)
+            return _try_sms(phone, text, fallback_detail=f"ZNS lỗi: {exc}")
 
-    if settings.SMS_API_KEY:
-        # Plug your SMS provider here (eSMS, SpeedSMS, Twilio...). Left as a single point of integration.
-        print(f"[SMS] -> {phone}: {text[:160]}")
-        return "sms"
+        return _try_sms(phone, text, fallback_detail="ZNS bị từ chối")
 
-    print(f"[MOCK ZNS/SMS] -> {phone}: {text[:160]}")
-    return "sms"
+    return _try_sms(phone, text, fallback_detail="Phòng khám chưa cấu hình Zalo ZNS")
+
+
+def _try_sms(phone: str, text: str, fallback_detail: str) -> Delivery:
+    if not sms_is_configured():
+        logger.warning(
+            "Không gửi được tin tới %s: %s và SMS cũng chưa cấu hình. "
+            "Tin nhắn KHÔNG được gửi; lịch hẹn sẽ được nhắc lại khi có kênh.",
+            phone, fallback_detail,
+        )
+        return Delivery(CHANNEL_NONE, False, f"{fallback_detail}; SMS chưa cấu hình")
+
+    try:
+        if _SMS_PROVIDERS[settings.SMS_PROVIDER](phone, text):
+            return Delivery("sms", True)
+        return Delivery(CHANNEL_NONE, False, "Nhà cung cấp SMS từ chối tin nhắn")
+    except Exception as exc:
+        logger.exception("SMS send failed via %s", settings.SMS_PROVIDER)
+        return Delivery(CHANNEL_NONE, False, f"SMS lỗi: {exc}")
 
 
 def reply_to_conversation_channel(db: Session, conversation, text: str):

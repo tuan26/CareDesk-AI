@@ -5,6 +5,12 @@ SUPPORTED_LOCALES = {"vi", "ja", "en"}
 FALLBACK_LOCALE = {"vi": "en", "ja": "en", "en": "en"}
 
 
+def say(locale: str, vi: str, en: str, ja: str) -> str:
+    """Pick one of three hand-written strings. For short operational sentences
+    that do not belong in the LANDING_TEXT/BOOKING_TEXT tables."""
+    return {"vi": vi, "en": en, "ja": ja}.get(locale, en)
+
+
 def normalize_locale(locale: Optional[str], default: str = "vi") -> str:
     value = (locale or default or "vi").lower().split("-", 1)[0]
     return value if value in SUPPORTED_LOCALES else (default if default in SUPPORTED_LOCALES else "vi")

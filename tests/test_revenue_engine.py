@@ -56,11 +56,14 @@ def db_session():
 def test_price_asked_schedules_followup_and_booking_cancels_it(db_session):
     db, clinic, lead, conv, service, doctor, branch = db_session
 
-    # Patient asks a price -> price_asked event -> follow-up scheduled (2d + 5d)
+    # Patient asks a price -> price_asked event -> follow-up scheduled.
+    # Only the 2-day nudge is seeded enabled; the 5-day promotional one ships
+    # switched off (spam risk on a brand-new Zalo OA), so it schedules nothing
+    # until the clinic turns it on.
     process_chat_message(db, conv.id, "Trị mụn giá bao nhiêu vậy?")
     process_new_events(db)
     followups = db.query(ScheduledAction).filter(ScheduledAction.status == "pending").all()
-    assert len(followups) >= 2  # 2-day and 5-day follow-ups
+    assert len(followups) >= 1
 
         # Patient sends a booking request -> it cancels pending follow-ups, before staff creates an appointment.
     process_chat_message(db, conv.id, "Tôi muốn đặt lịch trị mụn")
@@ -73,7 +76,7 @@ def test_price_asked_schedules_followup_and_booking_cancels_it(db_session):
 
 
     cancelled = db.query(ScheduledAction).filter(ScheduledAction.status == "cancelled").count()
-    assert cancelled >= 2
+    assert cancelled >= 1
 
 
 def test_completed_appointment_creates_revenue_and_review(db_session):

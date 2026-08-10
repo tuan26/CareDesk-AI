@@ -55,6 +55,13 @@ export default function OrgPage() {
           fetch(`${API_BASE}/org/me`, { headers }),
           fetch(`${API_BASE}/org/overview`, { headers }),
         ]);
+        // The chain console ships switched off (services/features.py). The API
+        // answers 404 rather than 403 so a disabled area looks absent instead of
+        // forbidden — say so plainly rather than rendering an empty console.
+        if (ov.status === 404) {
+          setErr('Tính năng quản lý chuỗi chưa được bật cho tài khoản này.');
+          return;
+        }
         if (ov.status === 403) { setErr('Tài khoản không thuộc chuỗi nào.'); return; }
         setOrg(await meOrg.json());
         setData(await ov.json());

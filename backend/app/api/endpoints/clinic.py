@@ -316,6 +316,102 @@ def _mask(token: str) -> str:
         return None
     return f"••••{token[-4:]}" if len(token) > 4 else "••••"
 
+@router.get("/features")
+def get_features(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> Any:
+    """Which optional areas are on for this clinic. Readable by any signed-in
+    user because the frontend needs it to decide what to render in the nav."""
+    from backend.app.services.features import LABELS, all_flags
+
+    flags = all_flags(db, current_user.clinic_id)
+    return {"flags": flags,
+            "labels": {k: LABELS.get(k, k) for k in flags}}
+
+
+@router.put("/features/{key}")
+def set_feature(
+    key: str,
+    enabled: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner)
+) -> Any:
+    from backend.app.services.features import set_flag
+
+    try:
+        set_flag(db, current_user.clinic_id, key, enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    log_action(db, current_user.id, "set_feature_flag", f"{key} -> {enabled}")
+    db.commit()
+    return {"key": key, "enabled": enabled}
+
+
+@router.get("/readiness")
+def get_readiness(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above)
+) -> Any:
+    """What still stops this clinic from doing the two things we sell.
+
+    One source of truth for three consumers: the dashboard banner, the
+    onboarding wizard's progress, and the guard that refuses to publish a public
+    link. Keeping them in sync any other way guarantees they drift.
+    """
+    from backend.app.services.channel_gateway import outbound_status
+
+    cid = current_user.clinic_id
+    clinic = db.query(Clinic).filter(Clinic.id == cid).first() if cid else None
+
+    has_service = db.query(Service).filter(Service.clinic_id == cid).first() is not None
+    has_doctor = db.query(Doctor).filter(
+        Doctor.clinic_id == cid, Doctor.is_active == True  # noqa: E712
+    ).first() is not None
+    # A schedule is what turns doctors into bookable slots. Without one the AI
+    # answers every booking attempt with "hiện chưa có khung giờ trống".
+    has_schedule = db.query(WorkingSchedule).join(
+        Doctor, WorkingSchedule.doctor_id == Doctor.id
+    ).filter(Doctor.clinic_id == cid).first() is not None
+    has_hours = bool(clinic and (clinic.address or "").strip())
+
+    channels = outbound_status(db, cid)
+
+    blockers = []
+    if not has_service:
+        blockers.append({"code": "no_service", "severity": "critical",
+                         "message": "Chưa có dịch vụ nào — AI không có gì để báo giá.",
+                         "action": "/services"})
+    if not has_doctor:
+        blockers.append({"code": "no_doctor", "severity": "critical",
+                         "message": "Chưa có bác sĩ đang hoạt động.",
+                         "action": "/doctors"})
+    if not has_schedule:
+        blockers.append({"code": "no_schedule", "severity": "critical",
+                         "message": "Chưa có lịch làm việc — AI không thể chốt được lịch hẹn nào.",
+                         "action": "/doctors"})
+    if not channels["can_reach_phone"]:
+        blockers.append({"code": "no_phone_channel", "severity": "critical",
+                         "message": "Chưa kết nối Zalo ZNS hoặc SMS — tin nhắn nhắc lịch KHÔNG được gửi đi.",
+                         "action": "/settings"})
+    if not channels["email"]:
+        blockers.append({"code": "no_email", "severity": "warning",
+                         "message": "Chưa cấu hình email — không gửi được xác nhận qua email.",
+                         "action": "/settings"})
+
+    return {
+        "has_service": has_service,
+        "has_doctor": has_doctor,
+        "has_schedule": has_schedule,
+        "has_address": has_hours,
+        "channels": channels,
+        # Everything needed to take a real booking end to end.
+        "can_take_bookings": has_service and has_doctor and has_schedule,
+        "can_send_reminders": channels["can_reach_phone"],
+        "blockers": blockers,
+    }
+
+
 @router.get("/channels", response_model=List[ChannelIntegrationOut])
 def get_channels(
     db: Session = Depends(get_db),

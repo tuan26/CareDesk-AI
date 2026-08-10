@@ -8,13 +8,14 @@ from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.api.deps import ROLE_OWNER, verify_receptionist_or_above
+from backend.app.api.deps import FeatureRequired, ROLE_OWNER, verify_receptionist_or_above
 from backend.app.models.models import (
     Appointment, Conversation, PatientLead, RevenueRecord, PatientPackage, User
 )
 from backend.app.schemas.schemas import CopilotAsk
+from backend.app.services.features import COPILOT
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(FeatureRequired(COPILOT))])
 
 fmt_money = lambda v: f"{v:,.0f}đ"  # noqa: E731
 

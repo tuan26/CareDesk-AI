@@ -74,7 +74,11 @@ def register_clinic(
         phone=reg_in.phone,
         address=reg_in.address,
         plan="free",
-        ai_quota_monthly=settings.PLAN_FREE_QUOTA
+        ai_quota_monthly=settings.PLAN_FREE_QUOTA,
+        # Stays closed until onboarding finishes. A brand-new clinic has no
+        # services, no doctors and no working schedule, so a public landing page
+        # would greet real patients with "hiện chưa có khung giờ trống".
+        landing_enabled=False,
     )
     db.add(clinic)
     db.flush()  # get clinic.id

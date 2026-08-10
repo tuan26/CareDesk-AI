@@ -21,6 +21,7 @@ from backend.app.services.landing import (
     BrandView, BranchView, NotFound, Redirect, branch_url, brand_url, chat_url,
     load_branch, load_brand,
 )
+from backend.app.services.features import MULTILANG, is_enabled
 from backend.app.services.i18n import SUPPORTED_LOCALES, landing_text, normalize_locale, service_content
 from backend.app.services.rate_limit import landing_rate_limiter
 
@@ -37,13 +38,19 @@ def _abs(path: str) -> str:
     return f"{settings.PUBLIC_BASE_URL.rstrip('/')}{path}"
 
 
-def _pick_locale(request: Request, default: str) -> str:
+def _pick_locale(request: Request, default: str, multilang: bool = True) -> str:
     """?lang= wins, then a previous choice, then the clinic default.
 
     The query parameter is what a shared link carries and what hreflang points
     at, so it has to beat the cookie - otherwise sending someone the English URL
     would still show them Vietnamese.
+
+    With multilang off the clinic's own language is the only one served. A
+    clinic that has not translated its service descriptions would otherwise
+    render English chrome around Vietnamese content, which reads as a bug.
     """
+    if not multilang:
+        return normalize_locale(default)
     q = request.query_params.get("lang")
     if q and normalize_locale(q, default) == q.lower():
         return q.lower()
@@ -137,7 +144,8 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
     except NotFound:
         return _not_found()
 
-    locale = _pick_locale(request, brand.default_locale)
+    multilang = is_enabled(db, brand.clinic_ids[0] if brand.clinic_ids else None, MULTILANG)
+    locale = _pick_locale(request, brand.default_locale, multilang)
     path = brand_url(brand.slug)
     where = f" — {brand.address}" if brand.address else ""
     desc = _clean(landing_text(
@@ -156,7 +164,7 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
             "chat_href": chat_url(brand.slug),
             "json_ld": _brand_json_ld(brand, path),
             "locale": locale,
-            "locales": sorted(SUPPORTED_LOCALES),
+            "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
             "svc": lambda s: service_content(s, locale),
         },
@@ -176,7 +184,8 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
     except NotFound:
         return _not_found()
 
-    locale = _pick_locale(request, brand.default_locale)
+    multilang = is_enabled(db, brand.clinic_ids[0] if brand.clinic_ids else None, MULTILANG)
+    locale = _pick_locale(request, brand.default_locale, multilang)
     path = branch_url(brand.slug, branch.slug)
     hours = landing_text(locale, "meta_hours", hours=branch.working_hours) if branch.working_hours else ""
     desc = _clean(landing_text(
@@ -196,7 +205,7 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
             "chat_href": chat_url(brand.slug, branch.slug),
             "json_ld": _branch_json_ld(brand, branch, path),
             "locale": locale,
-            "locales": sorted(SUPPORTED_LOCALES),
+            "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
             "svc": lambda s: service_content(s, locale),
         },

@@ -52,6 +52,7 @@ async def check_and_send_reminders():
 
     db = SessionLocal()
     sent_count = 0
+    undelivered = 0
     try:
         now = datetime.now()
         for kind, hours in REMINDER_KINDS:
@@ -73,18 +74,29 @@ async def check_and_send_reminders():
                 text = build_reminder_text(appt, kind)
                 patient = appt.patient
 
+                # A ReminderLog is written ONLY for a confirmed delivery, because
+                # the `already` check above reads it back as "this appointment has
+                # been reminded". Logging a failed send would silently retire the
+                # reminder: the patient never hears from us, and configuring a
+                # real channel later does not fix the appointments already marked.
                 if patient and patient.phone:
-                    channel = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
-                    db.add(ReminderLog(appointment_id=appt.id, kind=kind, channel=channel))
-                    sent_count += 1
+                    result = send_zns_or_sms(db, appt.clinic_id, patient.phone, text)
+                    if result.delivered:
+                        db.add(ReminderLog(appointment_id=appt.id, kind=kind,
+                                           channel=result.channel))
+                        sent_count += 1
+                    else:
+                        undelivered += 1
 
                 if patient and patient.email:
                     html = text.replace(" | ", "<br>").replace("Xác nhận: ", "<br><b>Xác nhận:</b> ").replace("Hủy lịch: ", "<b>Hủy lịch:</b> ")
-                    await send_email_notification(
+                    if await send_email_notification(
                         patient.email, "CareDesk AI - Nhắc lịch hẹn khám", f"<p>{html}</p>"
-                    )
-                    db.add(ReminderLog(appointment_id=appt.id, kind=kind, channel="email"))
-                    sent_count += 1
+                    ):
+                        db.add(ReminderLog(appointment_id=appt.id, kind=kind, channel="email"))
+                        sent_count += 1
+                    else:
+                        undelivered += 1
 
                 db.commit()
     except Exception:
@@ -92,6 +104,13 @@ async def check_and_send_reminders():
         db.rollback()
     finally:
         db.close()
+
+    if undelivered:
+        logger.warning(
+            "%s lời nhắc KHÔNG gửi được (chưa cấu hình kênh, hoặc nhà cung cấp từ chối). "
+            "Các lịch hẹn này vẫn ở trạng thái chưa nhắc và sẽ được thử lại ở lượt sau.",
+            undelivered,
+        )
     return sent_count
 
 
@@ -148,6 +167,7 @@ async def send_daily_digest():
 async def reminder_loop():
     """Unified background scheduler: reminders + automation engine + daily digest."""
     from backend.app.services.events import run_engine_tick, run_recurring_rules
+    from backend.app.services.payment_gateway import release_expired_holds
 
     logger.info("Scheduler started (every %ss)", settings.REMINDER_CHECK_INTERVAL_SECONDS)
     last_recurring_run = None
@@ -159,6 +179,9 @@ async def reminder_loop():
         # Automation engine: process events -> schedule -> dispatch
         db = SessionLocal()
         try:
+            # Free abandoned deposit holds first, so the slot is already back on
+            # the market when the waitlist automation runs in the same tick.
+            release_expired_holds(db)
             run_engine_tick(db)
             now = datetime.now()
             # Recurring rules (win-back, package expiry): once per hour is plenty

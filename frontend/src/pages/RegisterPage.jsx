@@ -38,7 +38,8 @@ export default function RegisterPage() {
       }
       const data = await res.json();
       localStorage.setItem('caredesk_token', data.access_token);
-      navigate('/');
+      // Straight into setup: an empty dashboard is where new clinics stall.
+      navigate('/onboarding');
     } catch (err) {
       setError(err.message);
     } finally {

@@ -25,3 +25,6 @@ Thumbs.db
 # DB backups (dev only)
 *.bak
 caredesk.db.bak*
+caredesk.before_restore_*
+# scripts/backup.py output — contains real patient data, never commit it
+backups/

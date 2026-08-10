@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Time, ForeignKey, Text, JSON
+from sqlalchemy import (
+    Column, Integer, String, Float, Boolean, DateTime, Time, ForeignKey, Text,
+    JSON, UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from backend.app.core.database import Base
@@ -106,6 +109,20 @@ class Clinic(Base):
     public_chat_v1_enabled = Column(Boolean, default=False, nullable=False)  # opt-in session-bound public chat
     landing_enabled = Column(Boolean, default=True, nullable=False)  # public landing page at /book/<slug>
     is_active = Column(Boolean, default=True)  # suspended clinics: AI + logins blocked
+
+    # --- Onboarding -----------------------------------------------------
+    onboarding_completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # What the clinic was doing BEFORE CareDesk, captured during onboarding.
+    # We sell "more bookings, fewer no-shows" — both are comparisons, and without
+    # a number the clinic stated themselves on day one there is nothing to
+    # compare against when they ask what they got for their money. The figures
+    # are their own estimate and will be rough; being their own is the point.
+    baseline_monthly_bookings = Column(Integer, nullable=True)
+    baseline_no_show_percent = Column(Float, nullable=True)
+    baseline_daily_price_asks = Column(Integer, nullable=True)
+    baseline_captured_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     organization = relationship("Organization", back_populates="clinics")
@@ -273,7 +290,11 @@ class Appointment(Base):
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False)
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
+    # See core/booking_rules.py for which statuses occupy the slot.
     status = Column(String, default="pending")  # pending | awaiting_deposit | confirmed | cancelled | completed | no_show
+    # While awaiting a deposit the slot is held. Without a deadline one patient
+    # who walks away from the payment page blocks that time forever.
+    hold_expires_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text, nullable=True)
     booking_source = Column(String, default="staff")  # staff | ai_chat | ai_followup | campaign | referral
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
@@ -497,3 +518,23 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="audit_logs")
+
+
+class FeatureFlag(Base):
+    """One on/off switch. See services/features.py for the keys and resolution.
+
+    clinic_id NULL means the vendor-wide default; a row with a clinic_id
+    overrides it for that clinic only.
+    """
+    __tablename__ = "feature_flags"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "key", name="uq_feature_flag_scope"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=True, index=True)
+    key = Column(String, nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now())

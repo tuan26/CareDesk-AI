@@ -1,14 +1,20 @@
 import json
+import logging
 import re
 from datetime import datetime, date, time, timedelta
 from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
+from backend.app.core.booking_rules import SLOT_HOLDING_STATUSES, STATUS_AWAITING_DEPOSIT
 from backend.app.models.models import (
     Conversation, Message, PatientLead, Service, Doctor, WorkingSchedule, Appointment, AISafetyRule,
     Clinic, Branch
 )
-from backend.app.services.i18n import locale_for_conversation, normalize_locale, service_content
+from backend.app.services.i18n import (
+    locale_for_conversation, normalize_locale, say as _say, service_content,
+)
+
+logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client if API key is provided
 openai_client = None
@@ -41,6 +47,73 @@ def check_safety_rules(db: Session, text: str, clinic_id: Optional[int] = None) 
     return None
 
 
+# --- Handing over to a human -------------------------------------------------
+
+#: The model is told to end its reply with this exact token when it is not
+#: confident. A token is far more reliable than sniffing the prose for polite
+#: phrases, which is what this used to do.
+HANDOFF_TOKEN = "[[CHUYEN_LE_TAN]]"
+
+#: Backstop for a model that ignores the instruction and simply says it cannot
+#: help. Previously this list was ANDed with "cần cấp cứu", so an ordinary "em
+#: không chắc, để lễ tân liên hệ lại" triggered nothing and the patient waited
+#: for a person who was never told.
+HANDOFF_PHRASES = (
+    "chuyển tiếp", "lễ tân sẽ liên hệ", "gặp người thật", "nhân viên y tế",
+    "bác sĩ hỗ trợ trực tiếp", "tôi không chắc", "em không chắc",
+    "tôi không có thông tin", "em không có thông tin",
+)
+
+#: Consecutive LLM failures per clinic. In-memory on purpose: the app already
+#: runs as a single process (WEB_CONCURRENCY=1, see TRIEN_KHAI.md) for the same
+#: reason the scheduler and rate limiter do.
+_llm_failure_streak: Dict[int, int] = {}
+
+#: After this many failures in a row, stop pretending and fetch a human.
+LLM_FAILURE_HANDOFF_THRESHOLD = 3
+
+
+def _note_llm_failure(clinic_id: Optional[int]) -> int:
+    key = clinic_id or 0
+    _llm_failure_streak[key] = _llm_failure_streak.get(key, 0) + 1
+    return _llm_failure_streak[key]
+
+
+def _note_llm_success(clinic_id: Optional[int]) -> None:
+    _llm_failure_streak.pop(clinic_id or 0, None)
+
+
+def llm_failure_streak(clinic_id: Optional[int]) -> int:
+    """Exposed so the dashboard can show that the AI is degraded right now."""
+    return _llm_failure_streak.get(clinic_id or 0, 0)
+
+
+def is_within_working_hours(db: Session, clinic_id: Optional[int],
+                            branch_id: Optional[int] = None,
+                            when: Optional[datetime] = None) -> bool:
+    """Is any doctor scheduled to be working at this moment?
+
+    Uses WorkingSchedule rather than Branch.working_hours because the latter is
+    free text ("08:00 - 20:00", "8h-20h, CN nghỉ") and cannot be parsed reliably.
+    A clinic with no schedule at all is treated as open, so a half-configured
+    clinic does not tell every patient it is closed.
+    """
+    when = when or datetime.now()
+    query = db.query(WorkingSchedule).join(Doctor, WorkingSchedule.doctor_id == Doctor.id)
+    if clinic_id:
+        query = query.filter(Doctor.clinic_id == clinic_id)
+    if branch_id:
+        query = query.filter(WorkingSchedule.branch_id == branch_id)
+
+    schedules = query.all()
+    if not schedules:
+        return True
+
+    today = [s for s in schedules if s.day_of_week == when.weekday()]
+    now_t = when.time()
+    return any(s.start_time <= now_t <= s.end_time for s in today)
+
+
 def get_available_slots(db: Session, doctor_id: int, target_date: date, duration_minutes: int) -> List[time]:
     """
     Find available time slots for a doctor on a specific date based on working schedules and appointments.
@@ -55,16 +128,30 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
     if not schedules:
         return []
         
-    # 2. Get existing appointments for this doctor on this day
+    # 2. Get existing appointments for this doctor on this day.
+    # SLOT_HOLDING_STATUSES includes awaiting_deposit: a patient who is away
+    # paying their deposit still owns that time. Leaving it out (as this did)
+    # offered the same slot to the next person who asked.
     start_of_day = datetime.combine(target_date, time.min)
     end_of_day = datetime.combine(target_date, time.max)
-    
+
     existing_appointments = db.query(Appointment).filter(
         Appointment.doctor_id == doctor_id,
         Appointment.start_time >= start_of_day,
         Appointment.start_time <= end_of_day,
-        Appointment.status.in_(["pending", "confirmed"])
+        Appointment.status.in_(SLOT_HOLDING_STATUSES)
     ).all()
+
+    # An expired deposit hold no longer blocks anyone. The scheduler cancels
+    # these within a minute, but filtering here means a patient asking in that
+    # gap is not told the slot is taken when it is already free.
+    now = datetime.now()
+    existing_appointments = [
+        a for a in existing_appointments
+        if not (a.status == STATUS_AWAITING_DEPOSIT
+                and a.hold_expires_at
+                and a.hold_expires_at.replace(tzinfo=None) <= now)
+    ]
     
     # 3. Generate all slots of `duration_minutes` within working hours
     all_slots = []
@@ -506,6 +593,12 @@ Quy tắc hoạt động bắt buộc:
 3. Chỉ được trả lời dựa trên thông tin phòng khám được cung cấp dưới đây. Tuyệt đối không tự bịa đặt thông tin, dịch vụ hoặc giá cả không có trong dữ liệu.
 4. Nếu khách hàng muốn đặt lịch, hãy thu thập thông tin còn thiếu và gửi booking request. KHÔNG được nói đó là lịch hẹn đã xác nhận hoặc tạo Appointment.
 5. ALWAYS answer in the patient's locale: {locale} (vi=Vietnamese, en=English, ja=Japanese).
+6. CHUYỂN NGƯỜI THẬT: nếu bạn không chắc chắn, hoặc câu hỏi nằm ngoài dữ liệu được cung cấp,
+   hoặc khách hỏi về chuyên môn y khoa/tình trạng bệnh, hoặc khách tỏ ra không hài lòng —
+   hãy trả lời ngắn gọn điều bạn biết chắc, KHÔNG suy đoán, rồi kết thúc câu trả lời bằng
+   đúng ký hiệu này ở dòng cuối: {HANDOFF_TOKEN}
+   Ký hiệu này sẽ được hệ thống gỡ bỏ trước khi khách nhìn thấy. Thà chuyển cho lễ tân
+   còn hơn trả lời sai về sức khoẻ hoặc giá tiền.
 
 BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
 {rag_context}
@@ -513,12 +606,13 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
 
     ai_response = ""
     evaluation_meta = {}
+    degraded = False   # answered by the keyword mock rather than the model
 
     # 6. Call LLM (or mock if no client configured)
     if openai_client:
         try:
             messages = [{"role": "system", "content": system_prompt}] + history_formatted + [{"role": "user", "content": user_message}]
-            
+
             # Request response from OpenAI
             response = openai_client.chat.completions.create(
                 model=settings.LLM_MODEL,  # 'gpt-5.6-terra'
@@ -528,22 +622,47 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
             )
             ai_response = response.choices[0].message.content
             evaluation_meta["model"] = settings.LLM_MODEL
-        except Exception as e:
-            print(f"OpenAI API call failed: {e}. Falling back to Mock.")
+            _note_llm_success(conv.clinic_id)
+        except Exception:
+            # Falling back to the keyword mock is a real quality drop, not a
+            # detail: the patient cannot tell, and neither could the clinic
+            # before this was logged and counted.
+            streak = _note_llm_failure(conv.clinic_id)
+            logger.error(
+                "LLM lỗi lần thứ %s liên tiếp cho phòng khám %s - đang trả lời bằng "
+                "bộ dò từ khoá thay cho AI", streak, conv.clinic_id, exc_info=True,
+            )
             ai_response = call_openai_gpt_mock(db, clinic, user_message, locale)
             evaluation_meta["fallback_mock"] = True
+            evaluation_meta["llm_failure_streak"] = streak
+            degraded = streak >= LLM_FAILURE_HANDOFF_THRESHOLD
     else:
         ai_response = call_openai_gpt_mock(db, clinic, user_message, locale)
         evaluation_meta["fallback_mock"] = True
 
-    # 7. Check if AI response itself implies handoff (e.g. LLM decided it can't answer or requested handoff)
+    # 7. Decide whether a human is needed.
     is_handoff = False
-    lower_res = ai_response.lower()
-    handoff_triggers = ["chuyển tiếp", "nhân viên y tế", "lễ tân sẽ liên hệ", "gặp người thật", "bác sĩ hỗ trợ trực tiếp"]
-    if any(trigger in lower_res for trigger in handoff_triggers) and "cần cấp cứu" in lower_res:
-        is_handoff = True
+    reason = None
+
+    if HANDOFF_TOKEN in ai_response:
+        ai_response = ai_response.replace(HANDOFF_TOKEN, "").strip()
+        is_handoff, reason = True, "model_unsure"
+    elif any(p in ai_response.lower() for p in HANDOFF_PHRASES):
+        # Backstop: the model said it could not help without using the token.
+        is_handoff, reason = True, "phrase_match"
+
+    if degraded:
+        # Repeated LLM failures: stop answering from the keyword mock and get a
+        # person, rather than serving degraded answers the clinic cannot see.
+        is_handoff, reason = True, "llm_unavailable"
+
+    if is_handoff:
         conv.status = "handoff_requested"
-        db.commit()
+        evaluation_meta["handoff_reason"] = reason
+        ai_response = f"{ai_response}\n\n{_handoff_note(db, conv, locale)}".strip()
+        from backend.app.services.ws_manager import ws_manager
+        ws_manager.notify(conv.clinic_id, {"type": "handoff", "conversation_id": conv.id,
+                                           "reason": reason, "patient_id": conv.patient_id})
 
     # 8. Save bot message to DB
     bot_msg = Message(
@@ -556,3 +675,28 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
     db.commit()
 
     return ai_response, is_handoff
+
+
+def _handoff_note(db: Session, conv: Conversation, locale: str) -> str:
+    """What we promise the patient when we fetch a human.
+
+    Says *when* someone will reply. Outside working hours "lễ tân sẽ liên hệ
+    ngay" is a promise the clinic cannot keep, and an unanswered promise at 11pm
+    costs more trust than admitting the clinic is closed.
+    """
+    open_now = is_within_working_hours(db, conv.clinic_id, conv.branch_id)
+    if open_now:
+        return _say(
+            locale,
+            "Em đã chuyển hội thoại cho lễ tân, bạn vui lòng đợi trong giây lát nhé.",
+            "I have passed this to our receptionist — please hold on a moment.",
+            "受付担当におつなぎしました。少々お待ちください。",
+        )
+    return _say(
+        locale,
+        "Hiện đã ngoài giờ làm việc nên em đã ghi nhận và chuyển cho lễ tân. "
+        "Phòng khám sẽ liên hệ lại với bạn ngay đầu giờ làm việc nhé.",
+        "We are outside working hours, so I have passed this to our receptionist. "
+        "The clinic will contact you at the start of the next working day.",
+        "現在営業時間外のため、受付担当に申し送りしました。翌営業日の開始時にご連絡いたします。",
+    )

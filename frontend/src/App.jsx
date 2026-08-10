@@ -17,6 +17,7 @@ import PlatformPage from './pages/PlatformPage';
 import OrgPage from './pages/OrgPage';
 import ClinicChatPage from './pages/ClinicChatPage';
 import BookingRequestsPage from './pages/BookingRequestsPage';
+import OnboardingPage from './pages/OnboardingPage';
 
 
 // The old /g/<slug> chain page is now server-rendered at /book/<slug>. That URL
@@ -83,6 +84,7 @@ function App() {
           <Route path="automation" element={<AutomationPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="onboarding" element={<OnboardingPage />} />
         </Route>
 
         {/* Fallback routing */}

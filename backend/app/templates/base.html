@@ -78,6 +78,9 @@ footer{padding:26px 0 44px;color:var(--muted);font-size:12.5px;text-align:center
       <h1>{{ heading }}</h1>
       {% block hero_meta %}{% endblock %}
     </div>
+    {# Empty when the multilang flag is off for this clinic — render nothing at
+       all rather than an empty nav that still takes up space in the hero. #}
+    {% if locales %}
     <nav class="langs" aria-label="Language">
       {% for lc in locales %}
       <a href="{{ canonical_path }}?lang={{ lc }}"
@@ -85,6 +88,7 @@ footer{padding:26px 0 44px;color:var(--muted);font-size:12.5px;text-align:center
          hreflang="{{ lc }}" rel="alternate">{{ lc | upper }}</a>
       {% endfor %}
     </nav>
+    {% endif %}
     <div class="cta-row">{% block hero_cta %}{% endblock %}</div>
   </div>
 </header>

@@ -25,8 +25,7 @@ FAQ_KEYWORDS = [
 ]
 
 
-def _say(locale: str, vi: str, en: str, ja: str) -> str:
-    return {"vi": vi, "en": en, "ja": ja}.get(locale, en)
+from backend.app.services.i18n import say as _say
 
 SERVICE_KEYWORD_MAP = [
     (["nặn mụn", "trị mụn", "mụn"], "Điều trị mụn Chuẩn Y Khoa"),

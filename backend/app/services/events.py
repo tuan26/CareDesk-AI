@@ -54,6 +54,11 @@ def deliver_to_patient(db: Session, patient: PatientLead, text: str) -> bool:
     Push a proactive message to a patient through their best channel:
     last conversation channel (Zalo/FB push, web = stored for widget polling),
     falling back to ZNS/SMS by phone.
+
+    The return value decides whether the ScheduledAction is marked "sent" or
+    "failed", so it must reflect a real delivery. A web conversation counts as
+    delivered the moment the Message row exists — the widget polls for it — but
+    a Zalo/FB push or an SMS only counts if the provider accepted it.
     """
     from backend.app.services.channel_gateway import (
         send_zalo_message, send_facebook_message, send_zns_or_sms
@@ -67,16 +72,17 @@ def deliver_to_patient(db: Session, patient: PatientLead, text: str) -> bool:
                        evaluation_metadata={"automation": True}))
         conv.updated_at = datetime.utcnow()
         if conv.channel == "zalo" and patient.external_id:
-            send_zalo_message(db, conv.clinic_id, patient.external_id, text)
-        elif conv.channel == "facebook" and patient.external_id:
-            send_facebook_message(db, conv.clinic_id, patient.external_id, text)
-        elif patient.phone:
-            send_zns_or_sms(db, conv.clinic_id, patient.phone, text)
-        return True
+            return send_zalo_message(db, conv.clinic_id, patient.external_id, text)
+        if conv.channel == "facebook" and patient.external_id:
+            return send_facebook_message(db, conv.clinic_id, patient.external_id, text)
+        if conv.channel == "web":
+            return True  # stored; the widget will pick it up on its next poll
+        if patient.phone:
+            return send_zns_or_sms(db, conv.clinic_id, patient.phone, text).delivered
+        return False
 
     if patient.phone:
-        send_zns_or_sms(db, patient.clinic_id, patient.phone, text)
-        return True
+        return send_zns_or_sms(db, patient.clinic_id, patient.phone, text).delivered
     return False
 
 
@@ -270,8 +276,12 @@ DEFAULT_RULES = [
     dict(name="Follow-up khách hỏi giá (2 ngày)", trigger_type="event", trigger_event="price_asked",
          delay_minutes=2 * 24 * 60, cancel_on_events=["booking_request_created", "appointment_created"], action_type="send_message",
          message_template="Chào {name}, hôm trước bạn có quan tâm {service} bên {clinic}. Bạn còn muốn tìm hiểu thêm không ạ? Em có thể tư vấn chi tiết hoặc giữ lịch khám cho bạn nhé!"),
+    # Off until the clinic trusts the system: a second unsolicited nudge about a
+    # promotion is the one most likely to be reported as spam, and a Zalo OA
+    # that collects spam reports early is hard to recover.
     dict(name="Follow-up khách hỏi giá (5 ngày - ưu đãi)", trigger_type="event", trigger_event="price_asked",
          delay_minutes=5 * 24 * 60, cancel_on_events=["booking_request_created", "appointment_created"], action_type="send_message",
+         enabled=False,
          message_template="Chào {name}, {clinic} đang có ưu đãi cho {service} trong tuần này. Bạn muốn em giữ một suất khám tư vấn miễn phí không ạ?"),
     dict(name="Nhắc tái khám sau 30 ngày", trigger_type="event", trigger_event="appointment_completed",
          delay_minutes=30 * 24 * 60, cancel_on_events=["appointment_created"], action_type="send_message",
@@ -279,8 +289,11 @@ DEFAULT_RULES = [
     dict(name="Xin đánh giá sau khám (2 giờ)", trigger_type="event", trigger_event="appointment_completed",
          delay_minutes=120, action_type="review_request",
          message_template="Chào {name}, cảm ơn bạn đã sử dụng {service} tại {clinic} hôm nay! Bạn chấm chất lượng dịch vụ mấy điểm (1-5) ạ? Trả lời bằng một con số giúp em nhé."),
+    # Off by default: this fires at the entire back catalogue at once. Sending
+    # it on day one, before the clinic has watched the system behave, is the
+    # fastest way to a spam complaint against a brand-new Zalo OA.
     dict(name="Đánh thức khách cũ (6 tháng)", trigger_type="recurring", condition={"inactive_days": 180},
-         action_type="send_message",
+         action_type="send_message", enabled=False,
          message_template="Chào {name}, lâu rồi chưa gặp bạn tại {clinic}! Bên em đang có chương trình soi da miễn phí cho khách hàng thân thiết. Bạn ghé chơi tuần này nhé?"),
     dict(name="Nhắc gói liệu trình sắp hết hạn", trigger_type="recurring", condition={"package_expiring_days": 14},
          action_type="send_message",
@@ -298,5 +311,8 @@ def seed_default_automations(db: Session, clinic_id: int):
     if existing:
         return
     for spec in DEFAULT_RULES:
-        db.add(AutomationRule(clinic_id=clinic_id, is_system=True, enabled=True, **spec))
+        # Most rules ship on; the two most spam-prone ship off and the clinic
+        # turns them on from the Automation screen once they trust the system.
+        spec = {"enabled": True, **spec}
+        db.add(AutomationRule(clinic_id=clinic_id, is_system=True, **spec))
     db.commit()

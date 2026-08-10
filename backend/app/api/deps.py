@@ -112,3 +112,28 @@ class RoleChecker:
 # Global dependency helpers for RBAC
 verify_owner = RoleChecker([ROLE_OWNER])
 verify_receptionist_or_above = RoleChecker([ROLE_RECEPTIONIST, ROLE_OWNER])
+
+
+class FeatureRequired:
+    """Gate a router behind a feature flag.
+
+    Answers 404 rather than 403: a disabled area should look like it does not
+    exist, not like something the user is not important enough to see.
+    """
+
+    def __init__(self, key: str):
+        self.key = key
+
+    def __call__(
+        self,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_active_user),
+    ) -> User:
+        from backend.app.services.features import is_enabled
+
+        if not is_enabled(db, current_user.clinic_id, self.key):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tính năng này chưa được bật cho tài khoản của bạn.",
+            )
+        return current_user

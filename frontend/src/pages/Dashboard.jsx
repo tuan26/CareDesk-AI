@@ -16,6 +16,39 @@ function RevenueCard({ title, value, sub, accent }) {
   );
 }
 
+/**
+ * One of the two numbers CareDesk is sold on, shown against what the clinic
+ * itself reported before signing up. Percentages alone cannot answer "what did
+ * I get for my money" — the comparison is the whole point.
+ */
+function BaselineCard({ title, before, now, unit, higherIsBetter }) {
+  const hasBefore = before !== null && before !== undefined;
+  const delta = hasBefore ? now - before : null;
+  const improved = delta === null ? null : (higherIsBetter ? delta > 0 : delta < 0);
+  const colour = improved === null ? 'var(--text-muted)' : improved ? '#0d9488' : '#dc2626';
+  const fmt = (v) => (v === null || v === undefined ? '—' : `${v}${unit === '%' ? '%' : ` ${unit}`}`);
+
+  return (
+    <div className="stat-card" style={{ borderTop: `3px solid ${colour}` }}>
+      <div className="stat-info">
+        <h3>{title}</h3>
+        <div className="stat-number" style={{ fontSize: '22px', color: colour }}>{fmt(now)}</div>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+          {hasBefore
+            ? <>Trước khi dùng CareDesk: {fmt(before)}
+                {delta !== null && (
+                  <strong style={{ color: colour, marginLeft: 6 }}>
+                    {delta > 0 ? '+' : ''}{Math.round(delta * 10) / 10}
+                  </strong>
+                )}
+              </>
+            : 'Chưa nhập số liệu ban đầu'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CopilotBox() {
   const [messages, setMessages] = useState([
     { role: 'bot', text: "Chào bạn! Hỏi tôi: 'Hôm nay có bao nhiêu lịch hẹn?', 'Doanh thu tháng này?', 'Tỷ lệ no-show?'..." }
@@ -90,6 +123,8 @@ export default function Dashboard() {
   const [todayAppointments, setTodayAppointments] = useState([]);
   const [handoffConversations, setHandoffConversations] = useState([]);
   const [stats, setStats] = useState({ appointmentsTodayCount: 0, conversationsCount: 0, pendingAppointmentsCount: 0, handoffCount: 0 });
+  const [readiness, setReadiness] = useState(null);
+  const [flags, setFlags] = useState({});
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -114,6 +149,15 @@ export default function Dashboard() {
           const repRes = await fetch(`${API_BASE}/reports/summary?${params}`, { headers });
           if (repRes.ok) setReport(await repRes.json());
         }
+
+        // What is stopping this clinic from operating (missing schedule, no
+        // message channel). Fetched for every role: a receptionist is usually
+        // the first to notice reminders are not going out.
+        const readyRes = await fetch(`${API_BASE}/clinic/readiness`, { headers });
+        if (readyRes.ok) setReadiness(await readyRes.json());
+
+        const featRes = await fetch(`${API_BASE}/clinic/features`, { headers });
+        if (featRes.ok) setFlags((await featRes.json()).flags || {});
 
         // Operational data
         const [apptsRes, convsRes] = await Promise.all([
@@ -158,6 +202,38 @@ export default function Dashboard() {
           <p>{isManager ? 'Số liệu tháng này — AI đang kiếm tiền cho bạn thế nào.' : 'Tình hình vận hành hôm nay.'}</p>
         </div>
       </div>
+
+      {/* Blockers first. A clinic whose reminders are going nowhere needs to
+          know that before it reads any revenue number. */}
+      {readiness?.blockers?.filter(b => b.severity === 'critical').map(b => (
+        <div key={b.code} onClick={() => navigate(b.action)} style={{
+          background: '#fef2f2', border: '1px solid #fecaca', borderLeft: '4px solid #dc2626',
+          borderRadius: 8, padding: '12px 16px', marginBottom: 10, cursor: 'pointer',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ color: '#991b1b', fontSize: 14 }}>⚠️ {b.message}</span>
+          <span style={{ color: '#dc2626', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>Sửa ngay →</span>
+        </div>
+      ))}
+
+      {/* The two numbers the product is sold on, against what the clinic
+          reported before signing up. */}
+      {isManager && report?.baseline && (
+        <div className="stats-grid" style={{ marginBottom: 4 }}>
+          <BaselineCard
+            title="Lịch hẹn / tháng"
+            before={report.baseline.monthly_bookings_before}
+            now={report.baseline.monthly_bookings_now}
+            unit="lịch" higherIsBetter
+          />
+          <BaselineCard
+            title="Tỷ lệ khách không đến"
+            before={report.baseline.no_show_percent_before}
+            now={report.baseline.no_show_percent_now}
+            unit="%" higherIsBetter={false}
+          />
+        </div>
+      )}
 
       {/* Revenue hero cards (owner only) */}
       {isManager && t && (
@@ -260,7 +336,7 @@ export default function Dashboard() {
         </div>
 
         {/* Copilot */}
-        <CopilotBox />
+        {flags.copilot && <CopilotBox />}
       </div>
     </div>
   );

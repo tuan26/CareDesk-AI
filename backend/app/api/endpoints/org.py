@@ -11,12 +11,17 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import create_access_token
-from backend.app.api.deps import get_org_user
+from backend.app.api.deps import FeatureRequired, get_org_user
 from backend.app.models.models import User, Clinic, Organization
 from backend.app.schemas.schemas import Token
+from backend.app.services.features import CHAIN_CONSOLE
 from backend.app.services.tenant_stats import clinic_metrics, aggregate
 
-router = APIRouter()
+# The chain roll-up is off for the first release: the product being sold is a
+# single clinic's booking rate. The Organization -> Clinic -> Branch hierarchy
+# underneath stays exactly as it is — it is what makes branches work — so
+# turning this back on is a flag flip, not a rebuild.
+router = APIRouter(dependencies=[Depends(FeatureRequired(CHAIN_CONSOLE))])
 
 
 @router.post("/enter-clinic/{clinic_id}", response_model=Token)

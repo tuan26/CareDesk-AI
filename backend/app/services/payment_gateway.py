@@ -6,12 +6,18 @@ system only talks to this module.
 """
 import hashlib
 import hmac
-from datetime import datetime
-from typing import Optional
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
-from backend.app.models.models import Payment, Appointment
+from backend.app.core.booking_rules import (
+    STATUS_AWAITING_DEPOSIT, STATUS_CANCELLED, STATUS_CONFIRMED, STATUS_PENDING,
+)
+from backend.app.models.models import Payment, Appointment, Clinic
 from backend.app.services.events import emit_event
+
+logger = logging.getLogger(__name__)
 
 
 def make_payment_token(payment_id: int) -> str:
@@ -43,6 +49,56 @@ def payment_url(payment: Payment) -> str:
             f"{payment.id}/pay?token={make_payment_token(payment.id)}")
 
 
+def hold_for_deposit(db: Session, appointment: Appointment,
+                     clinic: Optional[Clinic]) -> Tuple[Optional[Payment], Optional[str]]:
+    """Put an appointment on a deposit hold, if this clinic collects deposits.
+
+    Returns (payment, payment_url), or (None, None) when deposits are off — in
+    which case the appointment keeps whatever status it already had.
+
+    The hold has a deadline. Without one, a patient who opens the payment page
+    and wanders off keeps a prime evening slot locked indefinitely, and the
+    clinic never learns why their calendar looks full.
+    """
+    amount = (clinic.deposit_amount or 0) if clinic else 0
+    if amount <= 0:
+        return None, None
+
+    appointment.status = STATUS_AWAITING_DEPOSIT
+    appointment.hold_expires_at = datetime.now() + timedelta(
+        minutes=settings.DEPOSIT_HOLD_MINUTES
+    )
+    payment = create_deposit_payment(db, appointment, amount)
+    return payment, payment_url(payment)
+
+
+def release_expired_holds(db: Session) -> int:
+    """Cancel deposit holds whose deadline has passed and free the slot.
+
+    Emits appointment_cancelled so the waitlist automation gets its chance at
+    the freed slot — the same path a real cancellation takes.
+    """
+    now = datetime.now()
+    stale = db.query(Appointment).filter(
+        Appointment.status == STATUS_AWAITING_DEPOSIT,
+        Appointment.hold_expires_at != None,       # noqa: E711
+        Appointment.hold_expires_at <= now,
+    ).all()
+
+    for appt in stale:
+        appt.status = STATUS_CANCELLED
+        appt.note = ((appt.note or "") + " [Tự huỷ: quá hạn đặt cọc giữ chỗ]").strip()
+        emit_event(db, appt.clinic_id, "appointment_cancelled", patient_id=appt.patient_id,
+                   payload={"appointment_id": appt.id, "reason": "deposit_hold_expired",
+                            "service_id": appt.service_id,
+                            "date": appt.start_time.strftime("%d/%m/%Y"),
+                            "slot": appt.start_time.strftime("%H:%M")})
+    if stale:
+        db.commit()
+        logger.info("Đã nhả %s chỗ giữ quá hạn đặt cọc", len(stale))
+    return len(stale)
+
+
 def mark_paid(db: Session, payment: Payment, provider_ref: Optional[str] = None):
     """Confirm a payment: deposit -> appointment becomes confirmed + events fire."""
     if payment.status == "paid":
@@ -53,8 +109,9 @@ def mark_paid(db: Session, payment: Payment, provider_ref: Optional[str] = None)
 
     if payment.purpose == "deposit" and payment.appointment_id:
         appt = db.query(Appointment).filter(Appointment.id == payment.appointment_id).first()
-        if appt and appt.status in ("pending", "awaiting_deposit"):
-            appt.status = "confirmed"
+        if appt and appt.status in (STATUS_PENDING, STATUS_AWAITING_DEPOSIT):
+            appt.status = STATUS_CONFIRMED
+            appt.hold_expires_at = None  # paid: the hold is now a real booking
         emit_event(db, payment.clinic_id, "deposit_paid", patient_id=payment.patient_id,
                    payload={"appointment_id": payment.appointment_id, "amount": payment.amount})
 

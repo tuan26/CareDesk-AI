@@ -90,7 +90,19 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
     # SMS/ZNS gateway (mock when empty)
+    # SMS is the fallback when a clinic has no approved Zalo ZNS template (which
+    # is the common case early on, since ZNS approval takes days-to-weeks).
+    # Leave SMS_PROVIDER empty and NOTHING reaches a patient's phone — the
+    # dashboard warns about this rather than pretending reminders were sent.
+    # How long a slot stays held while the patient pays the deposit. Too short
+    # and people lose the slot mid-transfer; too long and one abandoned payment
+    # blocks a prime evening slot all day.
+    DEPOSIT_HOLD_MINUTES: int = int(os.getenv("DEPOSIT_HOLD_MINUTES", "15"))
+
+    SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "")        # "esms" | "speedsms" | ""
     SMS_API_KEY: str = os.getenv("SMS_API_KEY", "")
+    SMS_SECRET_KEY: str = os.getenv("SMS_SECRET_KEY", "")    # eSMS only
+    SMS_BRANDNAME: str = os.getenv("SMS_BRANDNAME", "")      # registered sender name
 
 
     # Rate limiting for public endpoints (requests per minute per IP)
