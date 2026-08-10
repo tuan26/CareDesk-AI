@@ -115,24 +115,63 @@ phụ thuộc vào ZNS chạy thật** — nếu không bạn sẽ kẹt ở th�
 không ký được khách, mà không ký được khách thì không xin được OA.
 
 OA Test dùng chung endpoint với OA thật — chỉ khác `access_token` và
-`zns_template_id`, **không cần sửa code**. Nhưng theo tài liệu Zalo, OA Test chỉ
-dùng được **sau khi** OA đã xác thực và admin nhận email phản hồi. Nên OA Test
-rút ngắn vòng lặp debug tích hợp, **không** bỏ được bước xác thực.
+`zns_template_id`, **không cần sửa code**.
 
-> **Khi dùng OA Test, bắt buộc khai `"zns_sandbox": true`:**
-> ```json
-> { "zns_template_id": "...", "zns_sandbox": true }
-> ```
-> OA Test trả lời **y hệt** OA thật — không có gì trong phản hồi cho biết không
-> ai nhận được tin. Thiếu cờ này, hệ thống sẽ báo là đã gửi tới bệnh nhân và
-> Dashboard chuyển xanh trong khi thực tế không ai nhận được gì.
+> ### ⚠️ Ba điều PHẢI xác nhận với Zalo trước khi lập kế hoạch dựa vào chúng
 >
-> Cần xác nhận thêm với Zalo: theo tôi biết OA Test thường **chỉ gửi tới số đã
-> đăng ký làm tester**, không gửi tự do. Nếu đúng thì không thể dùng OA Test để
-> chạy pilot với bệnh nhân thật.
+> Những mục dưới đây **chưa được kiểm chứng bằng tài liệu chính thức**. Đừng đưa
+> vào cam kết với khách hàng cho tới khi tự xác nhận tại
+> [developers.zalo.me](https://developers.zalo.me/).
+>
+> **1. Điều kiện tạo OA Test / sandbox.** Có nguồn cho rằng OA Test chỉ dùng được
+> sau khi OA đã xác thực và admin nhận email phản hồi từ Zalo. Nếu đúng thì OA
+> Test **không** bỏ qua được bước xác thực (vốn cần giấy phép doanh nghiệp), và
+> toàn bộ kế hoạch "tạm thời dùng OA Test" sẽ không mở được. **Đây là câu hỏi
+> quan trọng nhất — hỏi trước tiên.**
+>
+> **2. OA Test có gửi được tới số bất kỳ không?** Giả thuyết: chỉ gửi tới các số
+> đã đăng ký làm tester. Nếu đúng thì không dùng OA Test để chạy pilot với bệnh
+> nhân thật được. Chưa có nguồn xác nhận.
+>
+> **3. Tên gọi dịch vụ.** Theo thông tin hiện có, nhiều trang tài liệu ZNS đã
+> **ngừng cập nhật**, và **từ 01/01/2026 ZNS được hợp nhất vào ZBS Template
+> Message**. Tài liệu này và code vẫn dùng chữ "ZNS" như **tên gọi cũ (legacy)** —
+> xem mục thuật ngữ bên dưới.
+
+**Khi dùng OA Test, khai thêm `"zns_sandbox": true`:**
+
+```json
+{ "zns_template_id": "...", "zns_sandbox": true }
+```
+
+Vì sao cần cờ này: hệ thống xác định "tin đã tới bệnh nhân thật hay chưa" **dựa
+trên cờ khai báo, không dựa vào phản hồi của Zalo**. Nếu một OA Test trả về
+thành công giống OA thật (giả thuyết #2 ở trên — chưa xác nhận), thì thiếu cờ
+này CareDesk sẽ tính đó là một lần gửi tới bệnh nhân và tắt cảnh báo trên
+Dashboard. Khai cờ là cách an toàn bất kể Zalo hành xử thế nào — có test khoá
+hành vi này (`tests/test_delivery_honesty.py`).
 
 Cần cả `access_token` **và** `zns_template_id`. Chỉ có OA thôi là chưa đủ — đây
 là lý do phổ biến nhất khiến nhắc lịch im lặng ngừng chạy.
+
+### Thuật ngữ: "ZNS" trong code là tên gọi cũ
+
+Theo thông tin hiện có, ZNS đã được hợp nhất vào **ZBS Template Message** từ
+01/01/2026. Trong CareDesk, các tên sau **giữ nguyên** vì chúng là khoá lưu trong
+`ChannelIntegration.extra_config` — đổi tên sẽ làm hỏng cấu hình của các phòng
+khám đã kết nối:
+
+| Tên trong code | Nghĩa |
+|---|---|
+| `zns_template_id` | id template đã được Zalo duyệt |
+| `zns_sandbox` | đang trỏ vào OA Test |
+| `zns_is_configured()` | đã đủ điều kiện gửi chưa |
+
+Khi đọc tài liệu Zalo hiện hành, hiểu "ZNS" ở đây là **ZBS Template Message**.
+Nếu Zalo đổi endpoint hoặc định dạng payload, chỗ cần sửa là
+`ZNS_SEND_URL` và `_send` trong
+[channel_gateway.py](backend/app/services/channel_gateway.py) — **cần kiểm tra
+lại endpoint hiện hành trước khi kết nối OA thật đầu tiên.**
 
 ### Vậy demo cho phòng khám bằng gì khi chưa có OA?
 

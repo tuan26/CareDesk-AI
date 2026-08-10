@@ -23,6 +23,13 @@ from backend.app.models.models import ChannelIntegration
 logger = logging.getLogger(__name__)
 
 ZALO_SEND_URL = "https://openapi.zalo.me/v3.0/oa/message/cs"
+# Templated notifications to a phone number. "ZNS" is the legacy product name:
+# per Zalo, ZNS was consolidated into ZBS Template Message from 2026-01-01 and
+# much of the ZNS documentation is no longer maintained. The zns_* names are
+# kept because they are storage keys in ChannelIntegration.extra_config and
+# renaming them would break every clinic already connected — read them as
+# "template message". VERIFY THIS ENDPOINT against the current Zalo docs before
+# connecting the first real OA.
 ZNS_SEND_URL = "https://business.openapi.zalo.me/message/template"
 FB_SEND_URL = "https://graph.facebook.com/v19.0/me/messages"
 
@@ -216,8 +223,9 @@ def sms_reaches_real_phones() -> bool:
 
 
 def zns_is_configured(db: Session, clinic_id: Optional[int]) -> bool:
-    """ZNS needs an authorised OA *and* a Zalo-approved template id. Having the
-    OA alone is not enough, which is the usual reason reminders silently stop."""
+    """Template messaging needs an authorised OA *and* an approved template id.
+    Having the OA alone is not enough, which is the usual reason reminders
+    silently stop. ("zns" here is the legacy name — see ZNS_SEND_URL.)"""
     if not clinic_id:
         return False
     integration = get_integration(db, clinic_id, "zalo")
@@ -230,13 +238,15 @@ def zns_is_configured(db: Session, clinic_id: Optional[int]) -> bool:
 def zns_is_simulated(db: Session, clinic_id: Optional[int]) -> bool:
     """Is this clinic pointed at a Zalo *Test* OA rather than its real one?
 
-    A test OA speaks the same endpoint with the same payload — nothing in the
-    response distinguishes it — so it has to be declared. Set
-    ``extra_config = {"zns_sandbox": true}`` alongside the test token.
+    Declared, not detected: ``extra_config = {"zns_sandbox": true}`` alongside
+    the test token.
 
-    Without this flag a test OA would report every send as having reached the
-    patient and turn the dashboard green, which is the exact failure the SMS
-    sandbox handling exists to prevent.
+    We do not know — and have not confirmed against Zalo's documentation —
+    whether a test OA is distinguishable from a real one in the API response.
+    Declaring it is correct either way: if the responses are identical, this is
+    the only thing standing between a test OA and a green dashboard reporting
+    deliveries nobody received; if they are not, the flag simply agrees with
+    reality. The unsafe option is the one that assumes.
     """
     if not clinic_id:
         return False

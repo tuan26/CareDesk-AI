@@ -324,9 +324,14 @@ def test_a_simulated_sender_does_not_make_the_clinic_look_ready(db, clinic, monk
 
 
 def test_a_zalo_test_oa_must_be_declared_and_does_not_count_as_ready(db, clinic, monkeypatch):
-    """A Test OA speaks the same endpoint and answers identically to a real one,
-    so nothing in the response reveals that no patient was reached. It has to be
-    declared — otherwise the dashboard goes green on a channel nobody receives."""
+    """A declared test OA must never count as a live channel.
+
+    Whether Zalo's API distinguishes a test OA from a real one is not something
+    we have confirmed, so this does not rely on it: the simulation is declared in
+    config and honoured regardless of what the response looks like. This test
+    pins the safe behaviour — a successful-looking send through a declared test
+    OA still leaves can_reach_phone false.
+    """
     db.add(ChannelIntegration(
         clinic_id=clinic.id, channel="zalo", enabled=True, access_token="test-tok",
         extra_config={"zns_template_id": "123", "zns_sandbox": True},

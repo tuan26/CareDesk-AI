@@ -402,13 +402,13 @@ def get_readiness(
                        "Phải chuyển sang OA thật hoặc SMS thật trước khi nhận khách.",
             "action": "/settings"})
     elif not channels["can_reach_phone"]:
-        message = ("Chưa kết nối Zalo ZNS hoặc SMS — tin nhắn nhắc lịch KHÔNG "
-                   "được gửi đi.")
+        message = ("Chưa kết nối Zalo (ZNS/Template Message) hoặc SMS — "
+                   "tin nhắn nhắc lịch KHÔNG được gửi đi.")
         if channels["email"]:
             # Email works, so reminders are not entirely dead — but saying
             # "reminders are on" here would be misleading: Vietnamese patients
             # overwhelmingly do not read email appointment reminders.
-            message = ("Mới chỉ nhắc lịch được qua email. Chưa kết nối Zalo ZNS "
+            message = ("Mới chỉ nhắc lịch được qua email. Chưa kết nối Zalo "
                        "hoặc SMS, mà phần lớn bệnh nhân không đọc email nhắc lịch.")
         blockers.append({"code": "no_phone_channel", "severity": "critical",
                          "message": message, "action": "/settings"})
