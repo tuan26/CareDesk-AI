@@ -8,6 +8,9 @@ exist for.
 """
 import html
 import json
+import re
+from datetime import date, datetime, timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
+from backend.app.models.models import BookingRequest, PatientLead
+from backend.app.services.events import emit_event
 from backend.app.services.landing import (
     BrandView, BranchView, NotFound, Redirect, branch_url, brand_url, chat_url,
     load_branch, load_brand,
@@ -89,6 +94,15 @@ def _clean(text: str | None, limit: int = 300) -> str:
     return flat[: limit - 1] + "…" if len(flat) > limit else flat
 
 
+def _geo(branch) -> dict:
+    """schema.org geo. Coordinates are what let a clinic surface on a map result
+    rather than only in a text search, so they are worth the two extra columns."""
+    if branch.latitude is None or branch.longitude is None:
+        return {}
+    return {"geo": {"@type": "GeoCoordinates",
+                    "latitude": branch.latitude, "longitude": branch.longitude}}
+
+
 def _brand_json_ld(brand: BrandView, path: str) -> str:
     """Schema.org so Google can show address/phone/hours as a rich result."""
     data = {
@@ -111,6 +125,7 @@ def _brand_json_ld(brand: BrandView, path: str) -> str:
                 "address": {"@type": "PostalAddress", "streetAddress": b.address},
                 **({"telephone": b.phone} if b.phone else {}),
                 **({"openingHours": b.working_hours} if b.working_hours else {}),
+                **_geo(b),
             }
             for b in brand.branches
         ]
@@ -131,7 +146,184 @@ def _branch_json_ld(brand: BrandView, branch: BranchView, path: str) -> str:
         data["telephone"] = branch.phone or brand.phone
     if branch.working_hours:
         data["openingHours"] = branch.working_hours
+    data.update(_geo(branch))
+    if branch.map_url:
+        data["hasMap"] = branch.map_url
     return json.dumps(data, ensure_ascii=False)
+
+
+# --- Booking form -----------------------------------------------------------
+# Registered BEFORE /{brand}/{branch} or "dat-lich" is matched as a branch slug.
+# ("dat-lich" is also a reserved slug, so no branch can shadow it either way.)
+#
+# Why a form at all, when the AI can book inside the chat: a real share of
+# patients will not chat. Older patients especially, and anyone who just wants
+# it done — they open the chat, see a conversation starting, and close the tab.
+# That is a lost booking, which is the exact thing this product is sold on.
+# Server-rendered and JS-free: every step is a plain link or a form POST, so it
+# works on any phone and any connection.
+
+_MAX_DAYS_AHEAD = 30
+
+
+def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id,
+                     locale: str, multilang: bool) -> dict:
+    """Resolve however far through the form the patient has got."""
+    from backend.app.services.booking_flow import open_slots
+
+    branches = [b for b in brand.branches] or []
+    branch = next((b for b in branches if b.slug == branch_slug), None)
+    if branch is None and len(branches) == 1:
+        branch = branches[0]          # single location: never ask
+
+    service = next((s for s in brand.services if str(s.id) == str(service_id)), None)
+
+    today = date.today()
+    days = [today + timedelta(days=i) for i in range(_MAX_DAYS_AHEAD)]
+
+    chosen_day = None
+    if day:
+        try:
+            parsed = date.fromisoformat(day)
+            if today <= parsed <= today + timedelta(days=_MAX_DAYS_AHEAD):
+                chosen_day = parsed
+        except ValueError:
+            chosen_day = None
+
+    slots = []
+    if branch and service and chosen_day:
+        slots = open_slots(
+            db, clinic_id=getattr(branch, "clinic_id", None) or (brand.clinic_ids[0] if brand.clinic_ids else None),
+            target_date=chosen_day, duration=service.duration_minutes or 30,
+            branch_id=branch.id,
+            doctor_id=int(doctor_id) if doctor_id else None,
+        )
+
+    return {
+        "branches": branches, "branch": branch,
+        "service": service, "days": days, "chosen_day": chosen_day,
+        "slots": slots,
+        "doctors": brand.doctors,
+        "doctor_id": doctor_id,
+    }
+
+
+@router.get("/{slug}/dat-lich", response_class=HTMLResponse,
+            dependencies=[Depends(landing_rate_limiter)])
+def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
+                 branch: str = "", service: str = "", day: str = "",
+                 doctor: str = "", err: str = "", done: str = "", when: str = ""):
+    try:
+        brand = load_brand(db, slug)
+    except Redirect as r:
+        return RedirectResponse(f"{r.location}/dat-lich", status_code=301)
+    except NotFound:
+        return _not_found()
+
+    multilang = is_enabled(db, brand.clinic_ids[0] if brand.clinic_ids else None, MULTILANG)
+    locale = _pick_locale(request, brand.default_locale, multilang)
+    path = f"{brand_url(brand.slug)}/dat-lich"
+    ctx = _booking_context(db, brand, branch, service, day, doctor, locale, multilang)
+
+    response = templates.TemplateResponse(
+        request, "booking.html",
+        {
+            "brand": brand,
+            "heading": landing_text(locale, "form_title"),
+            "page_title": f"{landing_text(locale, 'form_title')} — {brand.name}",
+            "page_description": landing_text(locale, "form_desc", name=brand.name),
+            "canonical_path": path,
+            "base_url": settings.PUBLIC_BASE_URL.rstrip("/"),
+            "chat_href": chat_url(brand.slug),
+            "json_ld": _brand_json_ld(brand, path),
+            "locale": locale,
+            "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
+            "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "svc": lambda s: service_content(s, locale),
+            "error": err,
+            "done": bool(done),
+            "when": when,
+            **ctx,
+        },
+        # A half-filled form must never be served from a cache to the next visitor.
+        headers={"Cache-Control": "no-store"},
+    )
+    return _localized(response, locale)
+
+
+@router.post("/{slug}/dat-lich", response_class=HTMLResponse,
+             dependencies=[Depends(landing_rate_limiter)])
+async def booking_submit(slug: str, request: Request, db: Session = Depends(get_db)):
+    """Record the request. Deliberately does NOT create an Appointment.
+
+    Same rule the public chat follows: anything arriving from an unauthenticated
+    visitor becomes a BookingRequest that staff confirm. It keeps the doctor's
+    calendar under the clinic's control and means a bot filling in the form
+    cannot occupy real slots.
+    """
+    from backend.app.services.booking_flow import open_slots
+
+    try:
+        brand = load_brand(db, slug)
+    except (Redirect, NotFound):
+        return _not_found()
+
+    form = await request.form()
+    clinic_id = brand.clinic_ids[0] if brand.clinic_ids else None
+    base = f"{brand_url(brand.slug)}/dat-lich"
+    keep = (f"?branch={form.get('branch_slug', '')}&service={form.get('service_id', '')}"
+            f"&day={form.get('day', '')}&doctor={form.get('doctor_id', '')}")
+
+    def _back(message: str):
+        return RedirectResponse(f"{base}{keep}&err={quote(message)}", status_code=303)
+
+    full_name = (form.get("full_name") or "").strip()
+    phone = (form.get("phone") or "").strip()
+    if len(full_name) < 2:
+        return _back("Vui lòng nhập họ tên.")
+    if not re.fullmatch(r"0\d{8,10}", phone):
+        return _back("Số điện thoại chưa đúng. Ví dụ: 0901234567")
+    if not form.get("consent"):
+        return _back("Vui lòng đồng ý cho phòng khám liên hệ lại.")
+
+    service = next((s for s in brand.services if str(s.id) == str(form.get("service_id"))), None)
+    branch = next((b for b in brand.branches if b.slug == form.get("branch_slug")), None)
+    if not service or not branch:
+        return _back("Vui lòng chọn cơ sở và dịch vụ.")
+
+    day, slot = form.get("day", ""), form.get("slot", "")
+    # Re-check the slot server-side: the page may have been open for an hour.
+    try:
+        target = date.fromisoformat(day)
+    except ValueError:
+        return _back("Vui lòng chọn ngày khám.")
+    free = open_slots(db, clinic_id, target, service.duration_minutes or 30,
+                      branch_id=branch.id,
+                      doctor_id=int(form["doctor_id"]) if form.get("doctor_id") else None)
+    if slot not in {s.strftime("%H:%M") for s, _ in free}:
+        return _back("Khung giờ vừa chọn không còn trống. Vui lòng chọn giờ khác.")
+
+    patient = PatientLead(
+        clinic_id=clinic_id, full_name=full_name, phone=phone, source="web_form",
+        consent_given=True, consent_timestamp=datetime.now(),
+    )
+    db.add(patient)
+    db.flush()
+    db.add(BookingRequest(
+        clinic_id=clinic_id, patient_id=patient.id, service_id=service.id,
+        service_or_need=service.name,
+        preferred_time=f"{slot} {target.strftime('%d/%m/%Y')} — {branch.name}",
+        full_name=full_name, contact_method="phone", contact_value=phone,
+        note=(form.get("note") or "").strip() or None,
+        locale=normalize_locale(form.get("locale") or brand.default_locale),
+    ))
+    emit_event(db, clinic_id, "booking_request_created", patient_id=patient.id,
+               payload={"service_id": service.id, "service_name": service.name,
+                        "source": "web_form"})
+    db.commit()
+
+    return RedirectResponse(f"{base}?done=1&when={quote(slot + ' ' + target.strftime('%d/%m/%Y'))}",
+                            status_code=303)
 
 
 @router.get("/{slug}", response_class=HTMLResponse,

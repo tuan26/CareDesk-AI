@@ -1,6 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, Time, ForeignKey, Text,
-    JSON, UniqueConstraint,
+    Column, Integer, String, Float, Boolean, Date, DateTime, Time, ForeignKey,
+    Text, JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -151,6 +151,13 @@ class Branch(Base):
     address = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     working_hours = Column(String, nullable=True)  # e.g., "08:00 - 20:00"
+    # Getting there. A street address is not directions: patients overwhelmingly
+    # want a tap that opens their map app. map_url is whatever the clinic pastes
+    # (a Google Maps share link); lat/lng additionally feed schema.org geo so the
+    # location can appear as a rich result.
+    map_url = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     landing_enabled = Column(Boolean, default=False, nullable=False)  # opt-in per-branch landing page
     is_active = Column(Boolean, default=True, nullable=False)  # closed/renovating: hide without suspending the clinic
 
@@ -202,6 +209,39 @@ class WorkingSchedule(Base):
 
     doctor = relationship("Doctor", back_populates="schedules")
     branch = relationship("Branch", back_populates="schedules")
+
+
+class DoctorTimeOff(Base):
+    """Leave, public holidays, an afternoon off.
+
+    WorkingSchedule says which weekdays a doctor works, which is true forever
+    once entered. This is the exception to it. Without it the AI cheerfully
+    books patients through Tết, and the clinic finds out when someone arrives
+    to a locked door — which is the kind of incident that gets the AI switched
+    off for good.
+    """
+    __tablename__ = "doctor_time_off"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    # NULL = the whole clinic is closed (public holiday, Tết). One row instead of
+    # one per doctor, so nobody is forgotten.
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"),
+                       nullable=True, index=True)
+    start_date = Column(Date, nullable=False, index=True)
+    end_date = Column(Date, nullable=False, index=True)   # inclusive
+    # NULL/NULL = the whole day. Set both for a half day ("nghỉ chiều thứ 5").
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
+    reason = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    doctor = relationship("Doctor")
+
+    @property
+    def is_full_day(self) -> bool:
+        return self.start_time is None or self.end_time is None
 
 
 class PatientLead(Base):

@@ -54,6 +54,9 @@ def build_reminder_fields(appt: Appointment) -> dict:
         "time": appt.start_time.strftime("%H:%M"),
         "confirm_url": f"{base}/confirm?token={token}",
         "cancel_url": f"{base}/cancel?token={token}",
+        # Offering a move next to the cancel link turns "I can't make Thursday"
+        # into a different appointment rather than a lost one.
+        "reschedule_url": f"{base}/reschedule?token={token}",
     }
 
 
@@ -70,10 +73,11 @@ def build_reminder_text(appt: Appointment, kind: str) -> str:
     token = make_public_token(appt.id)
     confirm_url = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_STR}/public/appointments/{appt.id}/confirm?token={token}"
     cancel_url = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_STR}/public/appointments/{appt.id}/cancel?token={token}"
+    reschedule_url = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_STR}/public/appointments/{appt.id}/reschedule?token={token}"
     return (
         f"CareDesk nhắc lịch: Bạn có lịch hẹn {when} - {appt.service.name} "
         f"với {appt.doctor.name} lúc {time_str} tại {appt.branch.name}. "
-        f"Xác nhận: {confirm_url} | Hủy lịch: {cancel_url}"
+        f"Xác nhận: {confirm_url} | Đổi giờ: {reschedule_url} | Hủy lịch: {cancel_url}"
     )
 
 

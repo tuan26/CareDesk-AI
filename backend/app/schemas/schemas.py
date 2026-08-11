@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Optional, List, Dict, Any
 
 # User & Auth
@@ -71,6 +71,11 @@ class BranchBase(BaseModel):
     address: str
     phone: Optional[str] = None
     working_hours: Optional[str] = None
+    # Directions. map_url is whatever the clinic pastes from Google Maps;
+    # lat/lng additionally feed schema.org geo for rich results.
+    map_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class BranchCreate(BranchBase):
     clinic_id: int
@@ -93,6 +98,9 @@ class BranchUpdate(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     working_hours: Optional[str] = None
+    map_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     landing_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     slug: Optional[str] = None
@@ -479,6 +487,27 @@ class BookingRequestOut(BaseModel):
     note: Optional[str] = None
     status: str
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Doctor time off (leave, public holidays, half days)
+class TimeOffBase(BaseModel):
+    # None = the whole clinic is closed, e.g. a public holiday.
+    doctor_id: Optional[int] = None
+    start_date: date
+    end_date: date
+    # Both None = the whole day; set both for a half day.
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    reason: Optional[str] = None
+
+
+class TimeOffOut(TimeOffBase):
+    id: int
+    clinic_id: int
+    doctor_name: Optional[str] = None
 
     class Config:
         from_attributes = True

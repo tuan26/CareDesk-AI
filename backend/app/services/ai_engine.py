@@ -3,12 +3,13 @@ import logging
 import re
 from datetime import datetime, date, time, timedelta
 from typing import Dict, Any, List, Tuple, Optional
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.booking_rules import SLOT_HOLDING_STATUSES, STATUS_AWAITING_DEPOSIT
 from backend.app.models.models import (
-    Conversation, Message, PatientLead, Service, Doctor, WorkingSchedule, Appointment, AISafetyRule,
-    Clinic, Branch
+    Conversation, Message, PatientLead, Service, Doctor, DoctorTimeOff,
+    WorkingSchedule, Appointment, AISafetyRule, Clinic, Branch
 )
 from backend.app.services.i18n import (
     locale_for_conversation, normalize_locale, say as _say, service_content,
@@ -114,6 +115,26 @@ def is_within_working_hours(db: Session, clinic_id: Optional[int],
     return any(s.start_time <= now_t <= s.end_time for s in today)
 
 
+def time_off_for(db: Session, doctor_id: int, target_date: date) -> List["DoctorTimeOff"]:
+    """Leave covering this doctor on this date.
+
+    Includes clinic-wide closures (doctor_id NULL) — a public holiday is entered
+    once rather than once per doctor, precisely so nobody is left out and quietly
+    keeps taking bookings on Tết.
+    """
+    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    if not doctor:
+        return []
+
+    return db.query(DoctorTimeOff).filter(
+        DoctorTimeOff.clinic_id == doctor.clinic_id,
+        DoctorTimeOff.start_date <= target_date,
+        DoctorTimeOff.end_date >= target_date,
+        or_(DoctorTimeOff.doctor_id == doctor_id,
+            DoctorTimeOff.doctor_id.is_(None)),
+    ).all()
+
+
 def get_available_slots(db: Session, doctor_id: int, target_date: date, duration_minutes: int) -> List[time]:
     """
     Find available time slots for a doctor on a specific date based on working schedules and appointments.
@@ -124,8 +145,14 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
         WorkingSchedule.doctor_id == doctor_id,
         WorkingSchedule.day_of_week == day_of_week
     ).all()
-    
+
     if not schedules:
+        return []
+
+    # 1b. Leave and holidays override the weekly schedule. A full-day absence
+    # ends it here; a half day becomes a busy block like any appointment.
+    time_off = time_off_for(db, doctor_id, target_date)
+    if any(t.is_full_day for t in time_off):
         return []
         
     # 2. Get existing appointments for this doctor on this day.
@@ -175,6 +202,14 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
                     overlap = True
                     break
                     
+            # Half-day leave blocks its hours the same way a booking does.
+            for off in time_off:
+                off_start = datetime.combine(target_date, off.start_time)
+                off_end = datetime.combine(target_date, off.end_time)
+                if max(slot_start, off_start) < min(slot_end, off_end):
+                    overlap = True
+                    break
+
             # Check if slot is in the past (only for today)
             if target_date == date.today() and slot_start < datetime.now():
                 overlap = True

@@ -48,6 +48,11 @@ class BranchView:
     phone: Optional[str]
     working_hours: Optional[str]
     landing_enabled: bool
+    # Directions. A street address is not directions — patients want a tap that
+    # opens their map app.
+    map_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 @dataclass
@@ -175,6 +180,7 @@ def _build_brand(db: Session, *, org: Organization | None, clinics: list[Clinic]
                 id=b.id, name=b.name, slug=b.slug or "", address=b.address,
                 phone=b.phone, working_hours=b.working_hours,
                 landing_enabled=bool(b.landing_enabled),
+                map_url=b.map_url, latitude=b.latitude, longitude=b.longitude,
             )
             for b in branches if b.slug
         ],

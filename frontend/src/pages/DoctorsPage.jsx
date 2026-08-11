@@ -16,6 +16,9 @@ export default function DoctorsPage() {
   const [showDoctorModal, setShowDoctorModal] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState(null);
   const [doctorForm, setDoctorForm] = useState(EMPTY_DOCTOR_FORM);
+  const [timeOff, setTimeOff] = useState([]);
+  const [offForm, setOffForm] = useState({ doctor_id: '', start_date: '', end_date: '', start_time: '', end_time: '', reason: '' });
+  const [offError, setOffError] = useState('');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleForm, setScheduleForm] = useState(EMPTY_SCHEDULE_FORM);
   const navigate = useNavigate();
@@ -33,11 +36,12 @@ export default function DoctorsPage() {
   const fetchData = async () => {
     try {
       const headers = getHeaders();
-      const [meRes, doctorsRes, branchesRes, schedulesRes] = await Promise.all([
+      const [meRes, doctorsRes, branchesRes, schedulesRes, offRes] = await Promise.all([
         fetch(`${API_BASE}/auth/me`, { headers }),
         fetch(`${API_BASE}/clinic/doctors`, { headers }),
         fetch(`${API_BASE}/clinic/branches`, { headers }),
-        fetch(`${API_BASE}/clinic/schedules`, { headers })
+        fetch(`${API_BASE}/clinic/schedules`, { headers }),
+        fetch(`${API_BASE}/clinic/time-off`, { headers })
       ]);
       if (meRes.status === 401 || doctorsRes.status === 401) throw new Error('Unauthorized');
 
@@ -45,6 +49,7 @@ export default function DoctorsPage() {
       setDoctors(await doctorsRes.json());
       setBranches(await branchesRes.json());
       setSchedules(await schedulesRes.json());
+      if (offRes.ok) setTimeOff(await offRes.json());
     } catch (err) {
       console.error(err);
       if (err.message === 'Unauthorized') {
@@ -199,6 +204,34 @@ export default function DoctorsPage() {
 
   if (loading) return <div style={{ padding: '24px', textAlign: 'center' }}>Đang tải danh sách bác sĩ...</div>;
 
+  const saveTimeOff = async (e) => {
+    e.preventDefault();
+    setOffError('');
+    const body = {
+      doctor_id: offForm.doctor_id ? Number(offForm.doctor_id) : null,
+      start_date: offForm.start_date,
+      end_date: offForm.end_date || offForm.start_date,
+      start_time: offForm.start_time || null,
+      end_time: offForm.end_time || null,
+      reason: offForm.reason || null,
+    };
+    const res = await fetch(`${API_BASE}/clinic/time-off`, {
+      method: 'POST', headers: getHeaders(), body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      setOffError((await res.json()).detail || 'Không lưu được lịch nghỉ.');
+      return;
+    }
+    setOffForm({ doctor_id: '', start_date: '', end_date: '', start_time: '', end_time: '', reason: '' });
+    fetchData();
+  };
+
+  const deleteTimeOff = async (id) => {
+    if (!window.confirm('Xoá lịch nghỉ này? Các khung giờ sẽ mở lại cho khách đặt.')) return;
+    await fetch(`${API_BASE}/clinic/time-off/${id}`, { method: 'DELETE', headers: getHeaders() });
+    fetchData();
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -286,6 +319,91 @@ export default function DoctorsPage() {
                   {isManager && (
                     <td>
                       <button className="btn btn-danger btn-sm" onClick={() => handleDeleteSchedule(sched)}>Xóa</button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Ngày nghỉ — ngoại lệ của lịch tuần ở trên.
+          Không có phần này thì AI vẫn nhận lịch vào ngày bác sĩ nghỉ phép hoặc
+          ngày phòng khám đóng cửa, và khách đến nơi không có ai. */}
+      <div className="card-table-wrapper">
+        <div className="card-header">
+          <h2>Ngày nghỉ ({timeOff.length})</h2>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Nghỉ phép, nghỉ lễ, nghỉ nửa buổi. AI sẽ không nhận lịch trong các khoảng này.
+          </span>
+        </div>
+
+        {isManager && (
+          <form onSubmit={saveTimeOff} style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="form-group" style={{ margin: 0, minWidth: 170 }}>
+              <label style={{ fontSize: 12 }}>Ai nghỉ</label>
+              <select className="form-control" value={offForm.doctor_id}
+                onChange={(e) => setOffForm({ ...offForm, doctor_id: e.target.value })}>
+                <option value="">Cả phòng khám (nghỉ lễ)</option>
+                {doctors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 12 }}>Từ ngày *</label>
+              <input className="form-control" type="date" required value={offForm.start_date}
+                onChange={(e) => setOffForm({ ...offForm, start_date: e.target.value })} />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 12 }}>Đến ngày</label>
+              <input className="form-control" type="date" value={offForm.end_date}
+                onChange={(e) => setOffForm({ ...offForm, end_date: e.target.value })} />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 12 }}>Từ giờ</label>
+              <input className="form-control" type="time" value={offForm.start_time}
+                onChange={(e) => setOffForm({ ...offForm, start_time: e.target.value })} />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 12 }}>Đến giờ</label>
+              <input className="form-control" type="time" value={offForm.end_time}
+                onChange={(e) => setOffForm({ ...offForm, end_time: e.target.value })} />
+            </div>
+            <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 140 }}>
+              <label style={{ fontSize: 12 }}>Lý do</label>
+              <input className="form-control" placeholder="vd. Nghỉ Tết" value={offForm.reason}
+                onChange={(e) => setOffForm({ ...offForm, reason: e.target.value })} />
+            </div>
+            <button className="btn btn-primary" type="submit">Thêm</button>
+            <div style={{ flexBasis: '100%', fontSize: 12, color: 'var(--text-muted)' }}>
+              Bỏ trống giờ = nghỉ cả ngày. Bỏ trống "đến ngày" = nghỉ đúng một ngày.
+            </div>
+            {offError && <div style={{ flexBasis: '100%', color: '#b91c1c', fontSize: 13 }}>{offError}</div>}
+          </form>
+        )}
+
+        {timeOff.length === 0 ? (
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+            Chưa khai ngày nghỉ nào. Nhớ khai trước các dịp nghỉ lễ.
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr><th>Ai</th><th>Thời gian</th><th>Lý do</th>{isManager && <th></th>}</tr>
+            </thead>
+            <tbody>
+              {timeOff.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.doctor_name}</td>
+                  <td>
+                    {o.start_date === o.end_date ? o.start_date : `${o.start_date} → ${o.end_date}`}
+                    {o.start_time && <span style={{ color: 'var(--text-muted)' }}> ({o.start_time.slice(0, 5)}–{o.end_time.slice(0, 5)})</span>}
+                    {!o.start_time && <span style={{ color: 'var(--text-muted)' }}> (cả ngày)</span>}
+                  </td>
+                  <td>{o.reason || '—'}</td>
+                  {isManager && (
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => deleteTimeOff(o.id)}>Xoá</button>
                     </td>
                   )}
                 </tr>

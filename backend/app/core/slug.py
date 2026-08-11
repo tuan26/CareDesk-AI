@@ -35,6 +35,9 @@ RESERVED_SLUGS = frozenset({
     "redoc", "graphql", "ws", "webhooks", "search", "help", "support",
     "pricing", "about", "contact", "privacy", "terms", "blog", "news",
     "robots.txt", "favicon.ico", "sitemap.xml", "manifest.json",
+    # Sub-paths under /book/<brand>/. A branch named "dat-lich" would shadow the
+    # booking form for its whole brand.
+    "dat-lich", "datlich", "booking", "dat-hen",
 })
 
 _TYPE_BY_TABLE = {

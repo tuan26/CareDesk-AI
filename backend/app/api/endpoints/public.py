@@ -2,13 +2,15 @@
 Public (no-login) endpoints reached from reminder messages:
 tokenized one-click confirm / cancel links for patients.
 """
+from datetime import date, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.models.models import (
-    Appointment, Branch, Clinic, Organization, WorkingSchedule,
+    Appointment, Branch, Clinic, Organization, ReminderLog, WorkingSchedule,
 )
 from backend.app.schemas.schemas import PublicBranchOut, PublicClinicOut
 from backend.app.services.reminder import verify_public_token
@@ -207,6 +209,96 @@ def public_cancel(appt_id: int, token: str = "", db: Session = Depends(get_db)):
         icon="🗓️", title="Đã hủy lịch hẹn",
         body="Lịch hẹn của bạn đã được hủy thành công. Nếu muốn đặt lại, hãy nhắn tin cho trợ lý ảo hoặc gọi hotline phòng khám nhé."
     )
+
+
+@router.get("/appointments/{appt_id}/reschedule", response_class=HTMLResponse,
+            dependencies=[Depends(public_rate_limiter)])
+def public_reschedule(appt_id: int, token: str = "", day: str = "", slot: str = "",
+                      db: Session = Depends(get_db)):
+    """Move an appointment instead of cancelling it.
+
+    Without this the only options in a reminder are "confirm" and "cancel", so a
+    patient who simply cannot make Thursday cancels — and a good share of them
+    never rebook. Turning that cancellation into a different time is the cheapest
+    booking the clinic will ever get.
+
+    Same token as confirm/cancel: it already proves possession of the reminder,
+    and asking a patient to log in to move an appointment loses more of them than
+    it protects.
+    """
+    from backend.app.services.booking_flow import open_slots
+
+    appt = _get_valid_appointment(db, appt_id, token)
+    if appt.status in ("cancelled", "completed", "no_show"):
+        return PAGE_TEMPLATE.format(
+            icon="⚠️", title="Không đổi được lịch này",
+            body="Lịch hẹn đã kết thúc hoặc đã bị hủy. Vui lòng liên hệ phòng khám để đặt lịch mới.")
+
+    duration = (appt.service.duration_minutes if appt.service else 30) or 30
+    base = f"{settings.PUBLIC_BASE_URL}{settings.API_V1_STR}/public/appointments/{appt.id}"
+
+    # Step 2: a day and a time were picked — move it.
+    if day and slot:
+        try:
+            target = date.fromisoformat(day)
+            new_time = datetime.strptime(slot, "%H:%M").time()
+        except ValueError:
+            return PAGE_TEMPLATE.format(icon="⚠️", title="Dữ liệu không hợp lệ",
+                                        body="Vui lòng chọn lại ngày giờ.")
+
+        free = open_slots(db, appt.clinic_id, target, duration, branch_id=appt.branch_id)
+        match = next((doc for s, doc in free if s == new_time), None)
+        if not match:
+            return PAGE_TEMPLATE.format(
+                icon="⚠️", title="Khung giờ vừa chọn đã có người đặt",
+                body=f'Vui lòng <a href="{base}/reschedule?token={token}">chọn giờ khác</a>.')
+
+        old = appt.start_time.strftime("%H:%M %d/%m")
+        appt.doctor_id = match.id
+        appt.start_time = datetime.combine(target, new_time)
+        appt.end_time = appt.start_time + timedelta(minutes=duration)
+        # The old reminders described a time that no longer exists; drop them so
+        # the scheduler sends fresh ones for the new slot.
+        db.query(ReminderLog).filter(ReminderLog.appointment_id == appt.id).delete()
+        log_action(db, None, "public_reschedule",
+                   f"Khách tự đổi lịch #{appt.id}: {old} -> {slot} {target:%d/%m}")
+        db.commit()
+        ws_manager.notify(appt.clinic_id, {"type": "appointment_update", "appointment_id": appt.id})
+
+        return PAGE_TEMPLATE.format(
+            icon="✅", title="Đã đổi lịch hẹn",
+            body=f"Lịch hẹn mới của bạn: <b>{slot} ngày {target:%d/%m/%Y}</b> "
+                 f"tại {appt.branch.name}.<br>Hẹn gặp bạn!")
+
+    # Step 1: offer the next few days that actually have room.
+    today = date.today()
+    options = []
+    for offset in range(14):
+        d = today + timedelta(days=offset)
+        slots = open_slots(db, appt.clinic_id, d, duration, branch_id=appt.branch_id)
+        if not slots:
+            continue
+        buttons = "".join(
+            f'<a href="{base}/reschedule?token={token}&day={d.isoformat()}'
+            f'&slot={s:%H:%M}" style="display:inline-block;margin:3px;padding:7px 12px;'
+            f'border:1px solid #0d9488;border-radius:7px;color:#0d9488;'
+            f'text-decoration:none;font-size:14px">{s:%H:%M}</a>'
+            for s, _ in slots[:12]
+        )
+        options.append(f'<div style="margin:14px 0"><b>{d:%d/%m/%Y}</b><br>{buttons}</div>')
+        if len(options) >= 5:
+            break
+
+    if not options:
+        return PAGE_TEMPLATE.format(
+            icon="😔", title="Chưa có khung giờ trống",
+            body="Hai tuần tới đã kín lịch. Vui lòng gọi hotline để phòng khám sắp xếp giúp bạn.")
+
+    current = appt.start_time.strftime("%H:%M ngày %d/%m/%Y")
+    return PAGE_TEMPLATE.format(
+        icon="🗓️", title="Chọn giờ mới",
+        body=f"Lịch hiện tại: <b>{current}</b>.<br>Chọn khung giờ bạn muốn đổi sang:"
+             f'<div style="text-align:left">{"".join(options)}</div>')
 
 
 # ---------- Deposit payment (mock gateway; VNPay/MoMo adapter-ready) ----------

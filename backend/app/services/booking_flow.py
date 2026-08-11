@@ -142,6 +142,44 @@ def _other_open_branches(db: Session, clinic_id: Optional[int], exclude_id: int)
     return [b for b in query.all() if _branch_ever_open(db, b.id)]
 
 
+def open_slots(db: Session, clinic_id: Optional[int], target_date: date,
+               duration: int, branch_id: Optional[int] = None,
+               doctor_id: Optional[int] = None) -> list:
+    """Every free slot at a location on a date, as (time, doctor) pairs.
+
+    The chat flow only ever needs the first doctor who can take the booking, but
+    a form has to show the patient everything they could pick — including the
+    same time offered by two different doctors.
+
+    Sorted by time: a patient scanning for "chiều thứ 5" reads the clock, not the
+    staff list.
+    """
+    from backend.app.services.ai_engine import get_available_slots
+
+    query = db.query(Doctor).filter(Doctor.is_active == True)  # noqa: E712
+    if clinic_id:
+        query = query.filter(Doctor.clinic_id == clinic_id)
+    if doctor_id:
+        query = query.filter(Doctor.id == doctor_id)
+
+    weekday = target_date.weekday()
+    out = []
+    for doctor in query.all():
+        schedules = db.query(WorkingSchedule).filter(
+            WorkingSchedule.doctor_id == doctor.id,
+            WorkingSchedule.day_of_week == weekday,
+        )
+        if branch_id:
+            schedules = schedules.filter(WorkingSchedule.branch_id == branch_id)
+        if not schedules.first():
+            continue
+        for slot in get_available_slots(db, doctor.id, target_date, duration):
+            out.append((slot, doctor))
+
+    out.sort(key=lambda pair: pair[0])
+    return out
+
+
 def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: date,
                            duration: int, branch_id: Optional[int] = None):
     """Find an active doctor with free slots on the date. Returns (doctor, branch, slots).

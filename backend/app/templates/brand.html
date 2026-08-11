@@ -7,7 +7,8 @@
 {% endblock %}
 
 {% block hero_cta %}
-  <a class="btn" href="{{ chat_href }}">💬 {{ t('book_cta') }}</a>
+  <a class="btn" href="/book/{{ brand.slug }}/dat-lich">📅 {{ t('form_cta') }}</a>
+  <a class="btn ghost" href="{{ chat_href }}">💬 {{ t('book_cta') }}</a>
   {% if brand.phone %}<a class="btn ghost" href="tel:{{ brand.phone }}">{{ t('call') }}</a>{% endif %}
 {% endblock %}
 
@@ -28,6 +29,8 @@
         <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">{{ t('book_here') }}</a>
         {% if b.landing_enabled %}
           <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>
+          <a class="mini alt" target="_blank" rel="noopener"
+             href="{% if b.map_url %}{{ b.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ b.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
         {% endif %}
       </div>
     </div>

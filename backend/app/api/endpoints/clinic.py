@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,13 +7,14 @@ from backend.app.api.deps import (
     verify_receptionist_or_above, verify_owner, get_current_active_user
 )
 from backend.app.models.models import (
-    Clinic, Branch, Service, Doctor, WorkingSchedule, User, ChannelIntegration, AuditLog
+    Clinic, Branch, Service, Doctor, DoctorTimeOff, WorkingSchedule, User,
+    ChannelIntegration, AuditLog
 )
 from backend.app.schemas.schemas import (
     ClinicOut, ClinicCreate, BranchOut, BranchCreate, BranchUpdate,
     ServiceOut, ServiceCreate, DoctorOut, DoctorBase,
     WorkingScheduleOut, WorkingScheduleCreate,
-    ChannelIntegrationIn, ChannelIntegrationOut
+    ChannelIntegrationIn, ChannelIntegrationOut, TimeOffBase, TimeOffOut
 )
 from backend.app.core.slug import assign_slug, change_slug
 from backend.app.services.audit import log_action
@@ -105,7 +107,8 @@ def update_branch(
     if current_user.clinic_id and branch.clinic_id != current_user.clinic_id:
         raise HTTPException(status_code=403, detail="Chi nhánh không thuộc phòng khám của bạn.")
 
-    for field in ("name", "address", "phone", "working_hours", "landing_enabled", "is_active"):
+    for field in ("name", "address", "phone", "working_hours", "map_url",
+                  "latitude", "longitude", "landing_enabled", "is_active"):
         value = getattr(body, field)
         if value is not None:
             setattr(branch, field, value)
@@ -315,6 +318,85 @@ def _mask(token: str) -> str:
     if not token:
         return None
     return f"••••{token[-4:]}" if len(token) > 4 else "••••"
+
+# --- DOCTOR TIME OFF ---
+# WorkingSchedule is the rule; this is the exception to it. Without it the AI
+# takes bookings for doctors who are on leave and for days the clinic is shut.
+
+@router.get("/time-off", response_model=List[TimeOffOut])
+def list_time_off(
+    upcoming_only: bool = True,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above)
+) -> Any:
+    query = _scoped(db.query(DoctorTimeOff), DoctorTimeOff, current_user)
+    if upcoming_only:
+        query = query.filter(DoctorTimeOff.end_date >= date.today())
+    rows = query.order_by(DoctorTimeOff.start_date).all()
+    return [
+        TimeOffOut(
+            id=r.id, clinic_id=r.clinic_id, doctor_id=r.doctor_id,
+            start_date=r.start_date, end_date=r.end_date,
+            start_time=r.start_time, end_time=r.end_time, reason=r.reason,
+            doctor_name=r.doctor.name if r.doctor else "Cả phòng khám",
+        ) for r in rows
+    ]
+
+
+@router.post("/time-off", response_model=TimeOffOut)
+def create_time_off(
+    body: TimeOffBase,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner)
+) -> Any:
+    if body.end_date < body.start_date:
+        raise HTTPException(status_code=400, detail="Ngày kết thúc phải sau ngày bắt đầu.")
+    # Half day needs both ends: one alone cannot describe a block of time, and
+    # silently treating it as a full day would hide bookable hours.
+    if (body.start_time is None) != (body.end_time is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Nghỉ nửa ngày phải nhập cả giờ bắt đầu và giờ kết thúc. "
+                   "Bỏ trống cả hai nghĩa là nghỉ cả ngày.")
+    if body.start_time and body.end_time and body.end_time <= body.start_time:
+        raise HTTPException(status_code=400, detail="Giờ kết thúc phải sau giờ bắt đầu.")
+
+    if body.doctor_id:
+        doctor = db.query(Doctor).filter(Doctor.id == body.doctor_id).first()
+        if not doctor:
+            raise HTTPException(status_code=404, detail="Không tìm thấy bác sĩ.")
+        _check_same_clinic(doctor.clinic_id, current_user)
+
+    row = DoctorTimeOff(clinic_id=current_user.clinic_id, **body.model_dump())
+    db.add(row)
+    who = row.doctor.name if row.doctor_id else "cả phòng khám"
+    log_action(db, current_user.id, "create_time_off",
+               f"Nghỉ: {who} từ {body.start_date} đến {body.end_date}")
+    db.commit()
+    db.refresh(row)
+    return TimeOffOut(
+        id=row.id, clinic_id=row.clinic_id, doctor_id=row.doctor_id,
+        start_date=row.start_date, end_date=row.end_date,
+        start_time=row.start_time, end_time=row.end_time, reason=row.reason,
+        doctor_name=row.doctor.name if row.doctor else "Cả phòng khám",
+    )
+
+
+@router.delete("/time-off/{off_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_time_off(
+    off_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner)
+):
+    row = db.query(DoctorTimeOff).filter(DoctorTimeOff.id == off_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lịch nghỉ.")
+    _check_same_clinic(row.clinic_id, current_user)
+    log_action(db, current_user.id, "delete_time_off", f"Xoá lịch nghỉ #{off_id}")
+    db.delete(row)
+    db.commit()
+    return
+
 
 @router.get("/features")
 def get_features(

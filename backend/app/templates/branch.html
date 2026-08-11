@@ -8,7 +8,8 @@
 {% endblock %}
 
 {% block hero_cta %}
-  <a class="btn" href="{{ chat_href }}">💬 {{ t('book_at_branch') }}</a>
+  <a class="btn" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">📅 {{ t('form_cta') }}</a>
+  <a class="btn ghost" href="{{ chat_href }}">💬 {{ t('book_at_branch') }}</a>
   {% if branch.phone %}<a class="btn ghost" href="tel:{{ branch.phone }}">{{ t('call_branch') }}</a>{% endif %}
 {% endblock %}
 
@@ -22,9 +23,11 @@
     {% if branch.working_hours %}<p class="meta">🕐 {{ t('hours') }}: {{ branch.working_hours }}</p>{% endif %}
     {% if branch.phone %}<p class="meta">☎ <a href="tel:{{ branch.phone }}">{{ branch.phone }}</a></p>{% endif %}
     <div class="actions">
-      <a class="mini" href="{{ chat_href }}">{{ t('book_here') }}</a>
-      <a class="mini alt" href="https://www.google.com/maps/search/?api=1&amp;query={{ branch.address | urlencode }}"
-         target="_blank" rel="noopener">{{ t('directions') }}</a>
+      <a class="mini" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">{{ t('book_here') }}</a>
+      {# The clinic's own pasted map link is exact; searching the address text is
+         the fallback and can land on the wrong side of the street. #}
+      <a class="mini alt" target="_blank" rel="noopener"
+         href="{% if branch.map_url %}{{ branch.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ branch.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
     </div>
   </div>
 </section>
