@@ -4,6 +4,7 @@ service/time and creates an administrative BookingRequest; only staff or a
 calendar integration may create a confirmed Appointment.
 """
 import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
@@ -14,11 +15,35 @@ from backend.app.models.models import (
 from backend.app.services.i18n import booking_text, locale_for_conversation, service_content
 from backend.app.services.events import emit_event
 
-BOOKING_INTENT_KEYWORDS = [
-    "đặt lịch", "đặt hẹn", "book lịch", "muốn hẹn", "lịch hẹn", "đăng ký khám",
-    "book an appointment", "make an appointment", "booking", "予約", "予約したい",
+def strip_accents(text: str) -> str:
+    """Fold Vietnamese text to plain ASCII-ish lowercase for keyword matching.
+
+    Vietnamese is very often typed without diacritics, and phones drop them
+    silently. Matching accented literals meant "đặt lich" — one missing dot —
+    never registered as booking intent, so the state machine stayed asleep and
+    the model answered on its own. Both sides of every comparison are folded.
+
+    "đ" has no combining form, so NFD leaves it intact and it needs its own rule.
+    """
+    decomposed = unicodedata.normalize("NFD", text or "")
+    without_marks = "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+    return without_marks.replace("đ", "d").replace("Đ", "D").lower()
+
+
+_BOOKING_INTENT_SOURCE = [
+    "đặt lịch", "đặt hẹn", "đặt khám", "book lịch", "muốn hẹn", "lịch hẹn",
+    "đăng ký khám", "đăng ký lịch", "hẹn khám", "lấy lịch", "xếp lịch",
+    "book an appointment", "make an appointment", "booking", "book me",
+    "予約", "予約したい",
 ]
-CANCEL_KEYWORDS = ["hủy đặt lịch", "không đặt nữa", "thôi không đặt", "hủy luôn", "cancel", "キャンセル"]
+_CANCEL_SOURCE = [
+    "hủy đặt lịch", "không đặt nữa", "thôi không đặt", "hủy luôn", "hủy lịch",
+    "cancel", "キャンセル",
+]
+
+# Folded once at import; user text is folded per message.
+BOOKING_INTENT_KEYWORDS = [strip_accents(k) for k in _BOOKING_INTENT_SOURCE]
+CANCEL_KEYWORDS = [strip_accents(k) for k in _CANCEL_SOURCE]
 FAQ_KEYWORDS = [
     "giá", "bao nhiêu", "phí", "địa chỉ", "ở đâu", "mấy giờ", "mở cửa", "chi nhánh",
     "price", "cost", "address", "hours", "location", "料金", "住所", "営業時間",
@@ -106,9 +131,13 @@ def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str, loc
         return None
 
         
+    # Accent-folded on both sides: a patient typing "tri mun" or "seo ro" is
+    # naming the same service as one who types it with diacritics.
+    folded = strip_accents(text_lower)
+
     # Match legacy seed aliases first.
     for keywords, target_name in SERVICE_KEYWORD_MAP:
-        if any(kw in text_lower for kw in keywords):
+        if any(strip_accents(kw) in folded for kw in keywords):
             for s in services:
                 if s.name == target_name:
                     return s
@@ -119,7 +148,8 @@ def _resolve_service(db: Session, clinic_id: Optional[int], text_lower: str, loc
     for s in services:
         names = [s.name, service_content(s, locale)["name"]]
         hits = max(
-            (sum(1 for w in name.lower().split() if len(w) > 2 and w in text_lower) for name in names),
+            (sum(1 for w in strip_accents(name).split() if len(w) > 2 and w in folded)
+             for name in names),
             default=0,
         )
         if hits > best_hits:
@@ -233,14 +263,17 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     """
     state = dict(conv.booking_state or {})
     text_lower = user_message.lower()
+    # Keyword matching runs on the accent-folded form; the parsers below keep the
+    # original because their patterns already spell out both variants.
+    text_folded = strip_accents(user_message)
     locale = locale_for_conversation(conv, None)
-    has_intent = any(kw in text_lower for kw in BOOKING_INTENT_KEYWORDS)
+    has_intent = any(kw in text_folded for kw in BOOKING_INTENT_KEYWORDS)
 
     if not state.get("active") and not has_intent:
         return None
 
     # Cancel the flow
-    if state.get("active") and any(kw in text_lower for kw in CANCEL_KEYWORDS):
+    if state.get("active") and any(kw in text_folded for kw in CANCEL_KEYWORDS):
         conv.booking_state = {"active": False}
         db.commit()
         return _say(locale, "Dạ, tôi đã hủy yêu cầu đặt lịch. Nếu bạn cần hỗ trợ thêm, cứ nhắn cho tôi nhé!", "Your booking request has been cancelled. Please message me if you need further help.", "予約リクエストをキャンセルしました。ほかにお手伝いできることがあればお知らせください。")

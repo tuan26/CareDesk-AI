@@ -55,6 +55,22 @@ def check_safety_rules(db: Session, text: str, clinic_id: Optional[int] = None) 
 #: phrases, which is what this used to do.
 HANDOFF_TOKEN = "[[CHUYEN_LE_TAN]]"
 
+#: The model emits this when the patient wants to book. The keyword list can
+#: never cover every phrasing a person will use, so the model gets to raise its
+#: hand and the rule-based flow — the only thing that can actually write a
+#: BookingRequest — takes over from there.
+BOOKING_TOKEN = "[[DAT_LICH]]"
+
+#: Phrases that assert a booking was recorded. The model has no tool to record
+#: one, so any of these in its output is a fabrication: the patient goes away
+#: believing they have an appointment, and nobody at the clinic knows they are
+#: coming. Checked against the database before the reply is allowed out.
+BOOKING_CLAIM_PHRASES = (
+    "đã ghi nhận", "đã đặt lịch", "đã lưu thông tin", "đã đặt hẹn",
+    "đã tiếp nhận thông tin đặt", "sẽ liên hệ lại với bạn sớm nhất để xác nhận",
+    "lịch hẹn của bạn đã", "đã đăng ký lịch",
+)
+
 #: Backstop for a model that ignores the instruction and simply says it cannot
 #: help. Previously this list was ANDed with "cần cấp cứu", so an ordinary "em
 #: không chắc, để lễ tân liên hệ lại" triggered nothing and the patient waited
@@ -626,7 +642,11 @@ Quy tắc hoạt động bắt buộc:
 1. KHÔNG được chẩn đoán bệnh, KHÔNG kê đơn thuốc, KHÔNG hướng dẫn người bệnh tự xử lý tại nhà khi có dấu hiệu bất thường.
 2. LUÔN trả lời ngắn gọn, lịch sự, xưng tên phòng khám và gọi khách hàng là 'bạn'.
 3. Chỉ được trả lời dựa trên thông tin phòng khám được cung cấp dưới đây. Tuyệt đối không tự bịa đặt thông tin, dịch vụ hoặc giá cả không có trong dữ liệu.
-4. Nếu khách hàng muốn đặt lịch, hãy thu thập thông tin còn thiếu và gửi booking request. KHÔNG được nói đó là lịch hẹn đã xác nhận hoặc tạo Appointment.
+4. ĐẶT LỊCH: bạn KHÔNG có khả năng ghi nhận, lưu hay tạo lịch hẹn. Chỉ hệ thống làm được việc đó.
+   Vì vậy TUYỆT ĐỐI KHÔNG được nói những câu như "đã ghi nhận", "đã đặt lịch", "đã lưu thông tin",
+   "phòng khám sẽ liên hệ xác nhận" — nói vậy là nói dối khách, vì thực tế chưa có gì được lưu lại.
+   Khi khách muốn đặt lịch, hãy kết thúc câu trả lời bằng đúng ký hiệu này ở dòng cuối: {BOOKING_TOKEN}
+   Hệ thống sẽ gỡ ký hiệu đi và tự chuyển sang quy trình đặt lịch thật.
 5. ALWAYS answer in the patient's locale: {locale} (vi=Vietnamese, en=English, ja=Japanese).
 6. CHUYỂN NGƯỜI THẬT: nếu bạn không chắc chắn, hoặc câu hỏi nằm ngoài dữ liệu được cung cấp,
    hoặc khách hỏi về chuyên môn y khoa/tình trạng bệnh, hoặc khách tỏ ra không hài lòng —
@@ -675,6 +695,53 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
         ai_response = call_openai_gpt_mock(db, clinic, user_message, locale)
         evaluation_meta["fallback_mock"] = True
 
+    # 6b. The model raised its hand: the patient wants to book. Hand straight to
+    # the rule-based flow, which is the only thing that can actually create a
+    # BookingRequest. This catches the phrasings no keyword list will predict.
+    if BOOKING_TOKEN in ai_response:
+        ai_response = ai_response.replace(BOOKING_TOKEN, "").strip()
+        conv.booking_state = {**(conv.booking_state or {}), "active": True}
+        db.commit()
+        booking_response = handle_booking(db, conv, user_message)
+        if booking_response:
+            db.add(Message(conversation_id=conversation_id, sender="bot",
+                           content=booking_response,
+                           evaluation_metadata={"booking_flow": True,
+                                                "entered_via": "model_token"}))
+            db.commit()
+            return booking_response, False
+
+    # 6c. Never let the model tell a patient they are booked when they are not.
+    #
+    # It has no tool to record anything, so a sentence like "mình đã ghi nhận
+    # thông tin đặt lịch" is pure invention — and the most expensive kind: the
+    # patient stops looking, turns up on the day, and nobody at the clinic knows
+    # they are coming. Verified against the database rather than trusted.
+    if any(p in ai_response.lower() for p in BOOKING_CLAIM_PHRASES):
+        from backend.app.models.models import BookingRequest
+
+        really_booked = db.query(BookingRequest).filter(
+            BookingRequest.conversation_id == conv.id,
+            BookingRequest.status != "cancelled",
+        ).first() is not None
+
+        if not really_booked:
+            logger.error(
+                "AI bịa việc đã đặt lịch trong hội thoại %s — không có "
+                "BookingRequest nào. Đã thay bằng chuyển lễ tân.", conv.id,
+            )
+            evaluation_meta["fabricated_booking_claim"] = True
+            ai_response = _say(
+                locale,
+                "Xin lỗi bạn, em chưa gửi được yêu cầu đặt lịch. "
+                "Em chuyển thông tin của bạn cho lễ tân để gọi lại xác nhận nhé.",
+                "Sorry — I have not been able to submit a booking request. "
+                "I am passing your details to our receptionist to call you back.",
+                "申し訳ありません。予約リクエストを送信できませんでした。"
+                "受付担当より折り返しご連絡いたします。",
+            )
+            degraded = True   # force the handoff below
+
     # 7. Decide whether a human is needed.
     is_handoff = False
     reason = None
@@ -687,9 +754,12 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
         is_handoff, reason = True, "phrase_match"
 
     if degraded:
-        # Repeated LLM failures: stop answering from the keyword mock and get a
-        # person, rather than serving degraded answers the clinic cannot see.
-        is_handoff, reason = True, "llm_unavailable"
+        # Repeated LLM failures, or a fabricated booking claim: either way stop
+        # answering and get a person.
+        is_handoff = True
+        reason = ("fabricated_booking"
+                  if evaluation_meta.get("fabricated_booking_claim")
+                  else "llm_unavailable")
 
     if is_handoff:
         conv.status = "handoff_requested"
@@ -729,7 +799,10 @@ def _handoff_note(db: Session, conv: Conversation, locale: str) -> str:
         )
     return _say(
         locale,
-        "Hiện đã ngoài giờ làm việc nên em đã ghi nhận và chuyển cho lễ tân. "
+        # Deliberately not "đã ghi nhận": right after telling a patient their
+        # booking did NOT go through, that phrase reads as though something was
+        # saved after all.
+        "Hiện đã ngoài giờ làm việc nên em đã chuyển thông tin cho lễ tân. "
         "Phòng khám sẽ liên hệ lại với bạn ngay đầu giờ làm việc nhé.",
         "We are outside working hours, so I have passed this to our receptionist. "
         "The clinic will contact you at the start of the next working day.",
