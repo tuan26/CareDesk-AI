@@ -89,6 +89,23 @@ class Settings(BaseSettings):
     REMINDER_CHECK_INTERVAL_SECONDS: int = 60
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
+    # Where the React app is served. In production this is the same host as
+    # PUBLIC_BASE_URL — Vercel serves the SPA and rewrites /book/* here — so the
+    # default is correct there and the setting can be ignored.
+    #
+    # In development they are two different ports: the landing pages are rendered
+    # by this process on :8000 while the SPA runs on Vite's :5173. A relative
+    # "/chat/<slug>" link on a landing page then resolves against :8000 and 404s.
+    # Defaulting to the Vite port in non-production makes "Đặt lịch với trợ lý ảo"
+    # work out of the box instead of every developer hitting the same dead link.
+    FRONTEND_BASE_URL: str = os.getenv(
+        "FRONTEND_BASE_URL",
+        "http://localhost:5173"
+        if _ENVIRONMENT != "production"
+        and "localhost" in os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        else os.getenv("PUBLIC_BASE_URL", "http://localhost:8000"),
+    )
+
     # Where patient photos are written. Local disk by default, which is fine on
     # a single box but is EPHEMERAL on most PaaS: a redeploy wipes it and the
     # records point at files that no longer exist. Mount a persistent volume, or

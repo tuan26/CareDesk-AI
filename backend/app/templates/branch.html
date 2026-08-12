@@ -62,7 +62,7 @@
       <h3>📍 {{ b.name }}</h3>
       <p class="meta">{{ b.address }}</p>
       <div class="actions">
-        <a class="mini" href="/chat/{{ brand.slug }}/{{ b.slug }}">{{ t('book_here') }}</a>
+        <a class="mini" href="{{ chat_at(b.slug) }}">{{ t('book_here') }}</a>
         {% if b.landing_enabled %}<a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>{% endif %}
       </div>
     </div>

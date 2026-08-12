@@ -17,6 +17,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.core.slug import current_slug, resolve
 from backend.app.models.models import (
     Branch, Clinic, Doctor, Organization, Service, SlugRegistry,
@@ -34,7 +35,16 @@ def branch_url(brand_slug: str, branch_slug: str) -> str:
 
 
 def chat_url(brand_slug: str, branch_slug: str | None = None) -> str:
-    return f"/chat/{brand_slug}/{branch_slug}" if branch_slug else f"/chat/{brand_slug}"
+    """Absolute URL of the chat page.
+
+    /chat/* is a route of the React app, not of this process. A relative link
+    works only when the SPA and these landing pages share a host — true in
+    production, false in development where the landing is on :8000 and Vite on
+    :5173, so the link 404s. Built from FRONTEND_BASE_URL, which equals
+    PUBLIC_BASE_URL in production and so changes nothing there.
+    """
+    path = f"/chat/{brand_slug}/{branch_slug}" if branch_slug else f"/chat/{brand_slug}"
+    return f"{settings.FRONTEND_BASE_URL.rstrip('/')}{path}"
 
 
 # ---------------------------------------------------------------- view models
