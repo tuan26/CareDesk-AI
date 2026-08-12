@@ -18,6 +18,7 @@ import OrgPage from './pages/OrgPage';
 import ClinicChatPage from './pages/ClinicChatPage';
 import BookingRequestsPage from './pages/BookingRequestsPage';
 import OnboardingPage from './pages/OnboardingPage';
+import QueuePage from './pages/QueuePage';
 
 
 // The old /g/<slug> chain page is now server-rendered at /book/<slug>. That URL
@@ -77,6 +78,7 @@ function App() {
           <Route path="doctors" element={<DoctorsPage />} />
           <Route path="appointments" element={<AppointmentsPage />} />
           <Route path="booking-requests" element={<BookingRequestsPage />} />
+          <Route path="queue" element={<QueuePage />} />
 
           <Route path="inbox" element={<InboxPage />} />
           <Route path="patients" element={<PatientsPage />} />

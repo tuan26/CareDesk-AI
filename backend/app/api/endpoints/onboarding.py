@@ -31,6 +31,9 @@ class BaselineIn(BaseModel):
     monthly_bookings: Optional[int] = Field(None, ge=0, le=100000)
     no_show_percent: Optional[float] = Field(None, ge=0, le=100)
     daily_price_asks: Optional[int] = Field(None, ge=0, le=10000)
+    # The North Star. Asked now because it is the one number nobody can
+    # reconstruct later, and the whole retention claim rests on having a "before".
+    return_percent: Optional[float] = Field(None, ge=0, le=100)
 
 
 def _clinic(db: Session, user: User) -> Clinic:
@@ -73,7 +76,8 @@ def _steps(db: Session, clinic: Clinic) -> list[dict]:
          "hint": "Không có lịch làm việc thì AI không chốt được lịch hẹn nào."},
         {"key": "baseline", "title": "Số liệu hiện tại", "path": "/onboarding",
          "done": clinic.baseline_captured_at is not None,
-         "hint": "Để 2 tháng nữa đo được CareDesk mang lại thay đổi gì."},
+         "hint": "Để 2–3 tháng nữa đo được CareDesk mang lại thay đổi gì — "
+                 "nhất là tỷ lệ khách quay lại."},
     ]
 
 
@@ -105,6 +109,7 @@ def save_baseline(
     clinic.baseline_monthly_bookings = body.monthly_bookings
     clinic.baseline_no_show_percent = body.no_show_percent
     clinic.baseline_daily_price_asks = body.daily_price_asks
+    clinic.baseline_return_percent = body.return_percent
     clinic.baseline_captured_at = datetime.now()
     log_action(db, current_user.id, "save_baseline",
                f"Mốc so sánh: {body.monthly_bookings} lịch/tháng, "

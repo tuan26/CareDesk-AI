@@ -13,6 +13,7 @@ from backend.app.api.deps import verify_owner
 from backend.app.models.models import (
     Appointment, Conversation, User, RevenueRecord, PatientPackage, Clinic
 )
+from backend.app.services.retention import return_rate
 
 router = APIRouter()
 
@@ -115,14 +116,10 @@ def get_report_summary(
     monthly_fee = (clinic.monthly_fee or 0) if clinic else 0
     roi = round(ai_revenue / monthly_fee, 1) if monthly_fee > 0 else None
 
-    # Returning patients: completed 2+ visits (loyalty signal)
-    completed_by_patient = defaultdict(int)
-    all_completed_q = db.query(Appointment).filter(Appointment.status == "completed")
-    if current_user.clinic_id:
-        all_completed_q = all_completed_q.filter(Appointment.clinic_id == current_user.clinic_id)
-    for a in all_completed_q.all():
-        completed_by_patient[a.patient_id] += 1
-    returning_patients = sum(1 for c in completed_by_patient.values() if c >= 2)
+    # Do patients come back? A cohort rate, not a running total — see
+    # services/retention.py for why the old cumulative count could never show a
+    # change and so could never justify the subscription.
+    retention = return_rate(db, current_user.clinic_id)
 
     # Prepaid packages: outstanding service obligation (unused session value)
     pkg_query = db.query(PatientPackage).filter(PatientPackage.status == "active")
@@ -152,6 +149,17 @@ def get_report_summary(
     return {
         "range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "baseline": baseline,
+        "retention": {
+            "percent": retention.percent,
+            "cohort_size": retention.cohort_size,
+            "returned": retention.returned,
+            "window_days": retention.window_days,
+            # Below this the figure swings double digits on one patient, so the
+            # UI shows "chưa đủ dữ liệu" rather than a number that will embarrass
+            # us at the next review.
+            "is_reliable": retention.is_reliable,
+            "baseline_percent": clinic.baseline_return_percent if clinic else None,
+        },
         "totals": {
             "appointments": len(appointments),
             "conversations": total_convs,
@@ -162,7 +170,7 @@ def get_report_summary(
             "ai_revenue": ai_revenue,
             "roi": roi,
             "monthly_fee": monthly_fee,
-            "returning_patients": returning_patients,
+            "returning_patients": retention.returned,
             "active_packages": len(active_packages),
             "unused_package_value": unused_package_value,
         },

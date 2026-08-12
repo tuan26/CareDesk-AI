@@ -121,6 +121,9 @@ class Clinic(Base):
     baseline_monthly_bookings = Column(Integer, nullable=True)
     baseline_no_show_percent = Column(Float, nullable=True)
     baseline_daily_price_asks = Column(Integer, nullable=True)
+    # The North Star. Asked at onboarding because a clinic cannot recall it two
+    # months later, and without a "before" the cohort rate proves nothing.
+    baseline_return_percent = Column(Float, nullable=True)
     baseline_captured_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -335,6 +338,12 @@ class Appointment(Base):
     # While awaiting a deposit the slot is held. Without a deadline one patient
     # who walks away from the payment page blocks that time forever.
     hold_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # Queue timestamps. Deliberately NOT new status values: status already drives
+    # slot occupancy, revenue and reminders, and adding "arrived"/"in_progress"
+    # there would ripple through all three. The queue state is derived from these
+    # two instead — see api/endpoints/queue.py.
+    arrived_at = Column(DateTime(timezone=True), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text, nullable=True)
     booking_source = Column(String, default="staff")  # staff | ai_chat | ai_followup | campaign | referral
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
@@ -344,6 +353,75 @@ class Appointment(Base):
     service = relationship("Service", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
     branch = relationship("Branch", back_populates="appointments")
+
+
+class VisitRecord(Base):
+    """What happened at one visit. Deliberately light.
+
+    Not an EMR. Prescriptions are absent on purpose: Vietnam has specific rules
+    for electronic prescriptions, and a half-built one is a legal risk the clinic
+    would carry while blaming the software. What is here is the minimum a
+    dermatology/aesthetics clinic needs to answer "what did we do last time, and
+    what did we agree next" — plus the photos, which for this speciality are both
+    the record and the strongest sales asset the clinic owns.
+
+    One row per appointment: the visit is the unit, not the patient.
+    """
+    __tablename__ = "visit_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="CASCADE"),
+                            nullable=False, unique=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
+
+    chief_complaint = Column(Text, nullable=True)   # khách than phiền gì
+    findings = Column(Text, nullable=True)          # bác sĩ ghi nhận
+    treatment_done = Column(Text, nullable=True)    # đã làm gì hôm nay
+    advice = Column(Text, nullable=True)            # dặn dò về nhà
+    # Feeds the recall automation: the doctor's own judgement beats a fixed
+    # 30-day rule, because a laser course and a routine check are not the same.
+    next_visit_days = Column(Integer, nullable=True)
+
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    photos = relationship("VisitPhoto", back_populates="visit",
+                          cascade="all, delete-orphan")
+    appointment = relationship("Appointment")
+    patient = relationship("PatientLead")
+    doctor = relationship("Doctor")
+
+
+class VisitPhoto(Base):
+    """A before/after photo.
+
+    `stored_name` is an unguessable filename, never the original one: these are
+    photographs of patients' faces and bodies, so the path must not be derivable
+    from a patient id or a sequence. They are served only through an
+    authenticated, clinic-scoped endpoint — never from a static mount.
+    """
+    __tablename__ = "visit_photos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    visit_record_id = Column(Integer, ForeignKey("visit_records.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    kind = Column(String, nullable=False, default="after")   # before | after
+    stored_name = Column(String, nullable=False, unique=True)
+    original_name = Column(String, nullable=True)
+    content_type = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    caption = Column(String, nullable=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    visit = relationship("VisitRecord", back_populates="photos")
 
 
 class BookingRequest(Base):

@@ -77,6 +77,7 @@ export default function Layout() {
       { to: '/inbox', icon: '💬', text: t('inbox') },
       { to: '/booking-requests', icon: '📨', text: t('bookings') },
       { to: '/appointments', icon: '📅', text: t('appointments') },
+      { to: '/queue', icon: '🚶', text: 'Hàng đợi khám' },
     ] },
     { label: t('retain'), items: [
       { to: '/patients', icon: '👥', text: t('patients') }, { to: '/packages', icon: '🎁', text: t('packages') }, { to: '/automation', icon: '⚡', text: t('automation') },

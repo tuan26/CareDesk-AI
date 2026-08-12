@@ -49,6 +49,57 @@ function BaselineCard({ title, before, now, unit, higherIsBetter }) {
   );
 }
 
+/**
+ * Whether patients come back — the number this product ultimately lives or dies
+ * on. Deliberately refuses to show a percentage until the cohort is big enough:
+ * with three patients one of them swings it by 33 points, and a figure that
+ * moves like that will be argued with rather than believed.
+ */
+function RetentionCard({ r }) {
+  const before = r.baseline_percent;
+  const delta = r.percent != null && before != null ? r.percent - before : null;
+  const good = delta == null ? null : delta > 0;
+  const colour = good == null ? '#0f172a' : good ? '#0d9488' : '#dc2626';
+
+  return (
+    <div className="card-table-wrapper" style={{ padding: '16px 20px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 14 }}>⭐ Tỷ lệ khách quay lại</h3>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            Trong nhóm khách khám lần đầu, bao nhiêu % quay lại trong {r.window_days} ngày
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          {r.percent == null || !r.is_reliable ? (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-muted)' }}>Chưa đủ dữ liệu</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {r.cohort_size} khách trong nhóm — cần thêm thời gian
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 26, fontWeight: 700, color: colour }}>
+                {r.percent}%
+                {delta != null && (
+                  <span style={{ fontSize: 14, marginLeft: 8 }}>
+                    {delta > 0 ? '+' : ''}{Math.round(delta * 10) / 10}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {r.returned}/{r.cohort_size} khách
+                {before != null && <> · trước khi dùng CareDesk: {before}%</>}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CopilotBox() {
   const [messages, setMessages] = useState([
     { role: 'bot', text: "Chào bạn! Hỏi tôi: 'Hôm nay có bao nhiêu lịch hẹn?', 'Doanh thu tháng này?', 'Tỷ lệ no-show?'..." }
@@ -234,6 +285,11 @@ export default function Dashboard() {
           />
         </div>
       )}
+
+      {/* The North Star. Shown separately from the two sales numbers because it
+          is the slow one: the cohort needs ~3 months before it says anything,
+          and pretending otherwise invites an argument at the review. */}
+      {isManager && report?.retention && <RetentionCard r={report.retention} />}
 
       {/* Revenue hero cards (owner only) */}
       {isManager && t && (

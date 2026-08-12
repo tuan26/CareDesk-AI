@@ -15,7 +15,7 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [baseline, setBaseline] = useState({
-    monthly_bookings: '', no_show_percent: '', daily_price_asks: '',
+    monthly_bookings: '', no_show_percent: '', daily_price_asks: '', return_percent: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -142,6 +142,7 @@ export default function OnboardingPage() {
                   ['monthly_bookings', 'Trung bình mỗi tháng nhận bao nhiêu lịch hẹn?', 'vd. 120'],
                   ['no_show_percent', 'Khoảng bao nhiêu % khách đặt rồi không đến?', 'vd. 25'],
                   ['daily_price_asks', 'Mỗi ngày khoảng bao nhiêu người nhắn hỏi giá?', 'vd. 15'],
+                  ['return_percent', 'Khoảng bao nhiêu % khách quay lại lần thứ hai?', 'vd. 30'],
                 ].map(([key, label, ph]) => (
                   <label key={key} style={{ display: 'block', marginBottom: 10 }}>
                     <span style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>{label}</span>

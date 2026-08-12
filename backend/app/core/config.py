@@ -89,11 +89,18 @@ class Settings(BaseSettings):
     REMINDER_CHECK_INTERVAL_SECONDS: int = 60
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
+    # Where patient photos are written. Local disk by default, which is fine on
+    # a single box but is EPHEMERAL on most PaaS: a redeploy wipes it and the
+    # records point at files that no longer exist. Mount a persistent volume, or
+    # move to object storage, before a clinic relies on before/after photos.
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", str(_REPO_ROOT / "uploads"))
+
     # SMS/ZNS gateway (mock when empty)
     # SMS is the fallback when a clinic has no approved Zalo ZNS template (which
     # is the common case early on, since ZNS approval takes days-to-weeks).
     # Leave SMS_PROVIDER empty and NOTHING reaches a patient's phone — the
     # dashboard warns about this rather than pretending reminders were sent.
+
     # How long a slot stays held while the patient pays the deposit. Too short
     # and people lose the slot mid-transfer; too long and one abandoned payment
     # blocks a prime evening slot all day.
