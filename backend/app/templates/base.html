@@ -52,6 +52,10 @@ body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--ivory);
 a{color:inherit}
 img{max-width:100%}
 .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+/* A form is read down a single column, so it gets a shorter measure than the
+   marketing pages: at 1080px the price on a service row ends up half a screen
+   away from the name it belongs to. */
+.wrap.narrow{max-width:760px}
 
 /* Editorial typography: serif for anything carrying the brand voice. */
 h1,h2,h3,.serif{font-family:var(--serif);font-weight:500;letter-spacing:.01em}
@@ -103,6 +107,10 @@ header.hero{background:var(--paper);border-bottom:1px solid var(--line);padding:
 .cta-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px}
 
 section{padding:76px 0;border-bottom:1px solid var(--line)}
+/* Steps in a form are one task, not eight separate pitches — marketing-page
+   breathing room here just turns a five-field booking into five screens of
+   scrolling. */
+section.step{padding:40px 0}
 section:last-of-type{border-bottom:0}
 section.tinted{background:var(--ivory-2)}
 section.dark{background:var(--olive);color:var(--ivory);border-bottom:0}

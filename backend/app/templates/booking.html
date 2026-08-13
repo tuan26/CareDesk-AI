@@ -10,7 +10,9 @@
 #}
 
 {% block hero %}
-<div style="padding:34px 0 54px;max-width:640px">
+{# 712px is the content box of .wrap.narrow (760 less its 24px gutters), so the
+   heading starts on exactly the same line as the steps below it. #}
+<div style="padding:34px 0 54px;max-width:712px;margin:0 auto">
   <p class="eyebrow">{{ brand.name }}</p>
   <h1>{{ t('form_title') }}</h1>
   <p class="lead">{{ t('not_confirmed') }}</p>
@@ -24,150 +26,162 @@
 
 {% if done %}
 <section>
-  <div class="card" style="text-align:center">
-    <div style="font-size:44px">✅</div>
-    <h2 style="margin-top:8px">{{ t('done_title') }}</h2>
-    <p class="meta">{{ t('done_body', when=when) }}</p>
-    <div class="actions" style="justify-content:center">
-      <a class="mini" href="{{ canonical_path }}">{{ t('book_another') }}</a>
-      <a class="mini alt" href="/book/{{ brand.slug }}">{{ t('back_to', name=brand.name) }}</a>
+  <div class="wrap narrow">
+    <div class="card" style="text-align:center">
+      <div style="font-size:44px">✅</div>
+      <h2 style="margin-top:8px">{{ t('done_title') }}</h2>
+      <p class="meta">{{ t('done_body', when=when) }}</p>
+      <div class="actions" style="justify-content:center">
+        <a class="mini" href="{{ canonical_path }}">{{ t('book_another') }}</a>
+        <a class="mini alt" href="/book/{{ brand.slug }}">{{ t('back_to', name=brand.name) }}</a>
+      </div>
     </div>
   </div>
 </section>
 {% else %}
 
 {% if error %}
-<div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;margin-top:18px">
-  ⚠️ {{ error }}
+<div class="wrap narrow">
+  <div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;margin-top:18px">
+    ⚠️ {{ error }}
+  </div>
 </div>
 {% endif %}
 
 {# Step 1 — location. Skipped entirely when the clinic has one. #}
 {% if branches|length > 1 %}
-<section>
-  <h2>{{ t('step_branch') }}</h2>
-  {% if branch %}
-    <div class="row card">
-      <div><strong>{{ branch.name }}</strong><div class="meta">{{ branch.address }}</div></div>
-      <a class="mini alt" href="{{ canonical_path }}">{{ t('change') }}</a>
-    </div>
-  {% else %}
-    <div class="grid">
-      {% for b in branches %}
-      <a class="card row" style="text-decoration:none" href="{{ canonical_path }}?branch={{ b.slug }}">
-        <div><strong>{{ b.name }}</strong><div class="meta">{{ b.address }}</div></div>
-        <span class="mini">{{ t('details') }}</span>
-      </a>
-      {% endfor %}
-    </div>
-  {% endif %}
+<section class="step">
+  <div class="wrap narrow">
+    <h2>{{ t('step_branch') }}</h2>
+    {% if branch %}
+      <div class="row card">
+        <div><strong>{{ branch.name }}</strong><div class="meta">{{ branch.address }}</div></div>
+        <a class="mini alt" href="{{ canonical_path }}">{{ t('change') }}</a>
+      </div>
+    {% else %}
+      <div class="grid">
+        {% for b in branches %}
+        <a class="card row" style="text-decoration:none" href="{{ canonical_path }}?branch={{ b.slug }}">
+          <div><strong>{{ b.name }}</strong><div class="meta">{{ b.address }}</div></div>
+          <span class="mini">{{ t('details') }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 </section>
 {% endif %}
 
 {# Step 2 — service #}
 {% if branch %}
-<section>
-  <h2>{{ t('step_service') }}</h2>
-  {% if service %}
-    {% set c = svc(service) %}
-    <div class="row card">
-      <div>
-        <strong>{{ c.name }}</strong>
-        <div class="meta">{{ service.duration_minutes or 30 }} {{ t('minutes') }}</div>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center">
-        <span class="price">{{ "{:,.0f}".format(service.price) }}đ</span>
-        <a class="mini alt" href="{{ canonical_path }}?branch={{ branch.slug }}">{{ t('change') }}</a>
-      </div>
-    </div>
-  {% else %}
-    <div class="grid">
-      {% for s in brand.services %}
-      {% set c = svc(s) %}
-      <a class="card row" style="text-decoration:none"
-         href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ s.id }}">
+<section class="step">
+  <div class="wrap narrow">
+    <h2>{{ t('step_service') }}</h2>
+    {% if service %}
+      {% set c = svc(service) %}
+      <div class="row card">
         <div>
           <strong>{{ c.name }}</strong>
-          <div class="meta">{{ s.duration_minutes or 30 }} {{ t('minutes') }}</div>
+          <div class="meta">{{ service.duration_minutes or 30 }} {{ t('minutes') }}</div>
         </div>
-        <span class="price">{{ "{:,.0f}".format(s.price) }}đ</span>
-      </a>
-      {% endfor %}
-    </div>
-  {% endif %}
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="price">{{ "{:,.0f}".format(service.price) }}đ</span>
+          <a class="mini alt" href="{{ canonical_path }}?branch={{ branch.slug }}">{{ t('change') }}</a>
+        </div>
+      </div>
+    {% else %}
+      <div class="grid">
+        {% for s in brand.services %}
+        {% set c = svc(s) %}
+        <a class="card row" style="text-decoration:none"
+           href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ s.id }}">
+          <div>
+            <strong>{{ c.name }}</strong>
+            <div class="meta">{{ s.duration_minutes or 30 }} {{ t('minutes') }}</div>
+          </div>
+          <span class="price">{{ "{:,.0f}".format(s.price) }}đ</span>
+        </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 </section>
 {% endif %}
 
 {# Step 3 — date. Two weeks of buttons: a date picker on a small phone is worse. #}
 {% if branch and service %}
-<section>
-  <h2>{{ t('step_day') }}</h2>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    {% for d in days[:14] %}
-    <a class="mini {% if chosen_day != d %}alt{% endif %}"
-       href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}&day={{ d.isoformat() }}">
-      {% if loop.index0 == 0 %}{{ t('today') }}
-      {% elif loop.index0 == 1 %}{{ t('tomorrow') }}
-      {% else %}{{ d.strftime('%d/%m') }}{% endif %}
-    </a>
-    {% endfor %}
+<section class="step">
+  <div class="wrap narrow">
+    <h2>{{ t('step_day') }}</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      {% for d in days[:14] %}
+      <a class="mini {% if chosen_day != d %}alt{% endif %}"
+         href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}&day={{ d.isoformat() }}">
+        {% if loop.index0 == 0 %}{{ t('today') }}
+        {% elif loop.index0 == 1 %}{{ t('tomorrow') }}
+        {% else %}{{ d.strftime('%d/%m') }}{% endif %}
+      </a>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endif %}
 
 {# Steps 4 and 5 — time, then contact details, on one screen. #}
 {% if branch and service and chosen_day %}
-<section>
-  <h2>{{ t('step_slot') }} — {{ chosen_day.strftime('%d/%m/%Y') }}</h2>
+<section class="step">
+  <div class="wrap narrow">
+    <h2>{{ t('step_slot') }} — {{ chosen_day.strftime('%d/%m/%Y') }}</h2>
 
-  {% if not slots %}
-    <div class="card meta">{{ t('no_slots') }}</div>
-  {% else %}
-  <form method="post" action="{{ canonical_path }}">
-    <input type="hidden" name="branch_slug" value="{{ branch.slug }}">
-    <input type="hidden" name="service_id" value="{{ service.id }}">
-    <input type="hidden" name="day" value="{{ chosen_day.isoformat() }}">
-    <input type="hidden" name="locale" value="{{ locale }}">
+    {% if not slots %}
+      <div class="card meta">{{ t('no_slots') }}</div>
+    {% else %}
+    <form method="post" action="{{ canonical_path }}">
+      <input type="hidden" name="branch_slug" value="{{ branch.slug }}">
+      <input type="hidden" name="service_id" value="{{ service.id }}">
+      <input type="hidden" name="day" value="{{ chosen_day.isoformat() }}">
+      <input type="hidden" name="locale" value="{{ locale }}">
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
-      {% for slot, doc in slots %}
-      <label class="mini alt" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
-        <input type="radio" name="slot" value="{{ slot.strftime('%H:%M') }}" required
-               {% if loop.first %}checked{% endif %}>
-        {{ slot.strftime('%H:%M') }}
-      </label>
-      {% endfor %}
-    </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px">
+        {% for slot, doc in slots %}
+        <label class="mini alt" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+          <input type="radio" name="slot" value="{{ slot.strftime('%H:%M') }}" required
+                 {% if loop.first %}checked{% endif %}>
+          {{ slot.strftime('%H:%M') }}
+        </label>
+        {% endfor %}
+      </div>
 
-    <h2>{{ t('step_contact') }}</h2>
-    <div class="card">
-      <label style="display:block;margin-bottom:12px">
-        <div class="meta">{{ t('your_name') }} *</div>
-        <input name="full_name" required maxlength="80" autocomplete="name"
-               style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
-      </label>
-      <label style="display:block;margin-bottom:12px">
-        <div class="meta">{{ t('your_phone') }} *</div>
-        <input name="phone" required inputmode="tel" autocomplete="tel"
-               pattern="0[0-9]{8,10}" placeholder="0901234567"
-               style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
-      </label>
-      <label style="display:block;margin-bottom:12px">
-        <div class="meta">{{ t('your_note') }}</div>
-        <textarea name="note" rows="2" maxlength="500"
-                  style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px"></textarea>
-      </label>
-      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13.5px;margin-bottom:16px">
-        <input type="checkbox" name="consent" value="1" required style="margin-top:3px">
-        <span>{{ t('consent') }}</span>
-      </label>
-      <button class="btn" type="submit" style="border:0;cursor:pointer;font-family:inherit">
-        {{ t('submit') }}
-      </button>
-      <p class="meta" style="margin-top:10px">{{ t('not_confirmed') }}</p>
-    </div>
-  </form>
-  {% endif %}
+      <h2>{{ t('step_contact') }}</h2>
+      <div class="card">
+        <label style="display:block;margin-bottom:12px">
+          <div class="meta">{{ t('your_name') }} *</div>
+          <input name="full_name" required maxlength="80" autocomplete="name"
+                 style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
+        </label>
+        <label style="display:block;margin-bottom:12px">
+          <div class="meta">{{ t('your_phone') }} *</div>
+          <input name="phone" required inputmode="tel" autocomplete="tel"
+                 pattern="0[0-9]{8,10}" placeholder="0901234567"
+                 style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
+        </label>
+        <label style="display:block;margin-bottom:12px">
+          <div class="meta">{{ t('your_note') }}</div>
+          <textarea name="note" rows="2" maxlength="500"
+                    style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px"></textarea>
+        </label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13.5px;margin-bottom:16px">
+          <input type="checkbox" name="consent" value="1" required style="margin-top:3px">
+          <span>{{ t('consent') }}</span>
+        </label>
+        <button class="btn" type="submit" style="border:0;cursor:pointer;font-family:inherit">
+          {{ t('submit') }}
+        </button>
+        <p class="meta" style="margin-top:10px">{{ t('not_confirmed') }}</p>
+      </div>
+    </form>
+    {% endif %}
+  </div>
 </section>
 {% endif %}
 
