@@ -26,6 +26,7 @@ from backend.app.services.landing import (
     BrandView, BranchView, NotFound, Redirect, branch_url, brand_url, chat_url,
     load_branch, load_brand,
 )
+from backend.app.services import attribution
 from backend.app.services.features import MULTILANG, is_enabled
 from backend.app.services.i18n import SUPPORTED_LOCALES, landing_text, normalize_locale, service_content
 from backend.app.services.rate_limit import landing_rate_limiter
@@ -62,10 +63,17 @@ def _pick_locale(request: Request, default: str, multilang: bool = True) -> str:
     return normalize_locale(request.cookies.get("caredesk_lang"), default)
 
 
-def _localized(response, locale: str):
-    """Remember the visitor's language for the next page they open."""
+def _localized(response, locale: str, request=None):
+    """Remember the visitor's language, and where they came from.
+
+    Attribution is captured here because it has to happen on the *first* page a
+    visitor sees — by the time they hand over a phone number, several pages
+    later, the advert that brought them is long gone from the URL.
+    """
     response.set_cookie("caredesk_lang", locale, max_age=60 * 60 * 24 * 365,
                         samesite="lax", httponly=False)
+    if request is not None:
+        attribution.remember(request, response)
     return response
 
 
@@ -252,7 +260,7 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
         # A half-filled form must never be served from a cache to the next visitor.
         headers={"Cache-Control": "no-store"},
     )
-    return _localized(response, locale)
+    return _localized(response, locale, request)
 
 
 @router.post("/{slug}/dat-lich", response_class=HTMLResponse,
@@ -311,6 +319,9 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
         clinic_id=clinic_id, full_name=full_name, phone=phone, source="web_form",
         consent_given=True, consent_timestamp=datetime.now(),
     )
+    # Stamp the campaign that brought them, read from the cookie set on their
+    # first page view — which may have been weeks and several visits ago.
+    attribution.apply_to_lead(patient, attribution.read_cookie(request))
     db.add(patient)
     db.flush()
     db.add(BookingRequest(
@@ -370,7 +381,7 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )
-    return _localized(response, locale)
+    return _localized(response, locale, request)
 
 
 @router.get("/{brand_slug}/{branch_slug}", response_class=HTMLResponse,
@@ -415,4 +426,4 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )
-    return _localized(response, locale)
+    return _localized(response, locale, request)

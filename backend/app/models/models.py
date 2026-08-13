@@ -255,7 +255,25 @@ class PatientLead(Base):
     full_name = Column(String, nullable=False)
     phone = Column(String, index=True, nullable=True)
     email = Column(String, nullable=True)
-    source = Column(String, default="web")  # web | zalo | facebook
+    # HOW they first reached us. Distinct from Appointment.booking_source, which
+    # says who typed the booking in. Conflating the two answers neither question:
+    # "did the AI book this?" and "which advert paid for this patient?" have
+    # different answers and different owners.
+    source = Column(String, default="web")  # web | web_form | zalo | facebook | staff
+
+    # --- First touch -----------------------------------------------------
+    # Captured on the first page view and never overwritten. Last-touch is the
+    # easy thing to record and the wrong thing to report: the retargeting ad
+    # that caught someone on their way back gets credit for a patient the
+    # original campaign found, so the channel that actually works looks worse
+    # than the one that finished the job.
+    utm_source = Column(String, nullable=True, index=True)     # facebook | google | tiktok
+    utm_medium = Column(String, nullable=True)                 # cpc | organic | qr
+    utm_campaign = Column(String, nullable=True, index=True)   # "pico-thang-8"
+    utm_content = Column(String, nullable=True)                # which creative
+    referrer = Column(String, nullable=True)                   # where they came from
+    landing_path = Column(String, nullable=True)               # which page caught them
+    first_seen_at = Column(DateTime(timezone=True), nullable=True)
     external_id = Column(String, index=True, nullable=True)  # user id on Zalo/Facebook
     consent_given = Column(Boolean, default=False)
     consent_timestamp = Column(DateTime(timezone=True), nullable=True)

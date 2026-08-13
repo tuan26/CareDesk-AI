@@ -14,6 +14,7 @@ from backend.app.models.models import (
     Appointment, Conversation, User, RevenueRecord, PatientPackage, Clinic
 )
 from backend.app.services.retention import return_rate
+from backend.app.services import funnel as funnel_service
 
 router = APIRouter()
 
@@ -188,4 +189,41 @@ def get_report_summary(
             sorted(revenue_by_doctor.items(), key=lambda x: -x[1]["revenue"])
         ],
         "peak_hours": [{"hour": h, "count": c} for h, c in peak_hours.items()],
+    }
+
+
+@router.get("/funnel")
+def get_funnel(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    by_campaign: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner),
+) -> Any:
+    """Lead -> Booking -> Visit -> Revenue, broken down by where patients came
+    from. The screen that answers "is Facebook worth it" with money rather than
+    with clicks."""
+    f = funnel_service.build(db, current_user.clinic_id, start_date, end_date,
+                             by_campaign=by_campaign)
+    return {
+        "range": {"start_date": f.start_date.isoformat(),
+                  "end_date": f.end_date.isoformat()},
+        "totals": {
+            "leads": f.leads, "bookings": f.bookings,
+            "visits": f.visits, "revenue": f.revenue,
+            "lead_to_booking_percent": f.lead_to_booking,
+            "booking_to_visit_percent": f.booking_to_visit,
+        },
+        "channels": [
+            {"channel": r.channel, "campaign": r.campaign,
+             "leads": r.leads, "bookings": r.bookings, "visits": r.visits,
+             "revenue": r.revenue, "booking_rate_percent": r.booking_rate,
+             "show_rate_percent": r.show_rate,
+             "revenue_per_lead": r.revenue_per_lead}
+            for r in f.channels
+        ],
+        # Different question, same meeting: not "which advert paid for this
+        # patient" but "did the subscription earn its keep".
+        "ai": funnel_service.ai_contribution(db, current_user.clinic_id,
+                                             start_date, end_date),
     }
