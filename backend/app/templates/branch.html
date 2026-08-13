@@ -41,7 +41,7 @@
 {% block content %}
 
 {% if brand.services %}
-<section>
+<section id="dich-vu">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">{{ t('services') }}</p>
@@ -67,7 +67,7 @@
 {% endif %}
 
 {% if brand.cases %}
-<section class="tinted">
+<section id="ket-qua" class="tinted">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Real results</p>
@@ -99,7 +99,7 @@
 
 {% set others = brand.branches | rejectattr('id', 'equalto', branch.id) | list %}
 {% if others %}
-<section>
+<section id="co-so">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">{{ t('other_branches') }}</p>

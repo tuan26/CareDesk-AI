@@ -237,6 +237,9 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
         request, "booking.html",
         {
             "brand": brand,
+            # Which anchors exist on this page: the shared nav needs to know
+            # whether "#bac-si" is a scroll or a trip back to the brand page.
+            "page": "booking",
             "heading": landing_text(locale, "form_title"),
             "page_title": f"{landing_text(locale, 'form_title')} — {brand.name}",
             "page_description": landing_text(locale, "form_desc", name=brand.name),
@@ -363,6 +366,7 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
         request, "brand.html",
         {
             "brand": brand,
+            "page": "brand",
             "heading": brand.name,
             "page_title": f"{brand.name} — {landing_text(locale, 'title_suffix')}",
             "page_description": desc,
@@ -408,6 +412,7 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
         {
             "brand": brand,
             "branch": branch,
+            "page": "branch",
             "heading": f"{branch.name}",
             "page_title": f"{branch.name} — {brand.name}",
             "page_description": desc,

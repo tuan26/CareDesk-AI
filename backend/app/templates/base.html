@@ -47,6 +47,11 @@
   --sans:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 *{box-sizing:border-box}
+/* Jumping to a section should look like travelling there, not like the page
+   blinked. scroll-margin keeps the heading clear of the very top edge. */
+html{scroll-behavior:smooth}
+section[id]{scroll-margin-top:16px}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--ivory);
      line-height:1.65;-webkit-font-smoothing:antialiased}
 a{color:inherit}
@@ -201,11 +206,31 @@ footer a{color:rgba(245,241,234,.9)}
         <span class="brandname">{{ brand.name }}</span>
       </a>
 
+      {#
+        A nav link has to work from every page, and only the brand page carries
+        all four sections — a bare "#bac-si" on the booking form is a link that
+        silently does nothing, which is worse than not offering it.
+
+        So: anchors present on *this* page scroll; the rest travel to the brand
+        page and land on the same section. `here` lists what actually rendered,
+        which is why co-so is conditional on the branch page — with a single
+        location its "other branches" section never renders.
+      #}
+      {% set home = '/book/' ~ brand.slug %}
+      {% set here = {
+           'brand':  ['dich-vu', 'bac-si', 'ket-qua', 'co-so'],
+           'branch': ['dich-vu', 'ket-qua'] + (['co-so'] if brand.branches|length > 1 else []),
+         }.get(page, []) %}
+
       <div class="nav-links">
-        {% if brand.services %}<a href="#dich-vu">{{ t('services') }}</a>{% endif %}
-        {% if brand.doctors %}<a href="#bac-si">{{ t('doctors') }}</a>{% endif %}
-        {% if brand.cases %}<a href="#ket-qua">{{ t('showcase_nav') }}</a>{% endif %}
-        {% if brand.branches %}<a href="#co-so">{{ t('locations') }}</a>{% endif %}
+        {% if brand.services %}
+        <a href="{{ '' if 'dich-vu' in here else home }}#dich-vu">{{ t('services') }}</a>{% endif %}
+        {% if brand.doctors %}
+        <a href="{{ '' if 'bac-si' in here else home }}#bac-si">{{ t('doctors') }}</a>{% endif %}
+        {% if brand.cases %}
+        <a href="{{ '' if 'ket-qua' in here else home }}#ket-qua">{{ t('showcase_nav') }}</a>{% endif %}
+        {% if brand.branches %}
+        <a href="{{ '' if 'co-so' in here else home }}#co-so">{{ t('locations') }}</a>{% endif %}
       </div>
 
       {# Empty when the multilang flag is off for this clinic. #}
