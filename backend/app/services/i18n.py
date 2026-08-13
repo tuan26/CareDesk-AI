@@ -76,6 +76,10 @@ UI_TEXT = {
         "welcome": "Chào bạn {name}, tôi là trợ lý ảo CareDesk AI. Tôi có thể giúp bạn giải đáp dịch vụ, bảng giá phòng khám hoặc hỗ trợ gửi yêu cầu đặt lịch. Bạn đang quan tâm dịch vụ nào ạ?",
         "connection_error": "Lỗi kết nối đến máy chủ. Vui lòng thử lại sau.", "send_error": "Rất tiếc, đã xảy ra lỗi kết nối. Vui lòng gửi lại.",
         "handoff": "Đang chuyển tiếp thông tin cho lễ tân hỗ trợ...", "agent_placeholder": "Lễ tân sẽ trả lời bạn ngay tại đây...",
+        "branch": "Cơ sở bạn muốn đến", "branch_any": "— Để phòng khám tư vấn giúp —",
+        "branch_full": "chưa nhận đặt lịch online",
+        "open_chat": "Trò chuyện với trợ lý ảo", "close_chat": "Đóng",
+        "replying": "Đang trả lời…", "send": "Gửi",
     },
     "en": {
         "title": "CareDesk AI Virtual Receptionist", "active": "Available 24/7",
@@ -86,6 +90,10 @@ UI_TEXT = {
         "welcome": "Hello {name}, I am the CareDesk AI assistant. I can help with services, prices, clinic information, or a booking request. Which service are you interested in?",
         "connection_error": "Could not connect to the server. Please try again.", "send_error": "Sorry, a connection error occurred. Please send your message again.",
         "handoff": "Your information is being transferred to our reception team...", "agent_placeholder": "Our receptionist will reply here shortly...",
+        "branch": "Which location?", "branch_any": "— Let the clinic advise me —",
+        "branch_full": "online booking unavailable",
+        "open_chat": "Chat with the virtual assistant", "close_chat": "Close",
+        "replying": "Replying…", "send": "Send",
     },
     "ja": {
         "title": "CareDesk AI 受付アシスタント", "active": "24時間対応",
@@ -96,6 +104,10 @@ UI_TEXT = {
         "welcome": "{name}様、こんにちは。CareDesk AIアシスタントです。サービス、料金、クリニック情報、予約リクエストをお手伝いします。ご希望のサービスはありますか？",
         "connection_error": "サーバーに接続できませんでした。もう一度お試しください。", "send_error": "接続エラーが発生しました。もう一度メッセージを送信してください。",
         "handoff": "受付スタッフへ情報を引き継いでいます...", "agent_placeholder": "受付スタッフがこちらで返信します...",
+        "branch": "ご希望の店舗", "branch_any": "— クリニックに相談する —",
+        "branch_full": "オンライン予約不可",
+        "open_chat": "バーチャルアシスタントと話す", "close_chat": "閉じる",
+        "replying": "返信中…", "send": "送信",
     },
 }
 

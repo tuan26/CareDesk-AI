@@ -17,7 +17,9 @@
 
     <div class="cta-row">
       <a class="btn" href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
-      <a class="btn ghost" href="{{ chat_href }}">{{ t('book_cta') }}</a>
+      {# data-cd-open: the script turns this into the corner panel. Without it
+         the href still reaches the full chat page. #}
+      <a class="btn ghost" href="{{ chat_href }}" data-cd-open>{{ t('book_cta') }}</a>
     </div>
 
     {% if c('stats') %}

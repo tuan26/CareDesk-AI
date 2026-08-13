@@ -28,7 +28,9 @@ from backend.app.services.landing import (
 )
 from backend.app.services import attribution
 from backend.app.services.features import MULTILANG, is_enabled
-from backend.app.services.i18n import SUPPORTED_LOCALES, landing_text, normalize_locale, service_content
+from backend.app.services.i18n import (
+    SUPPORTED_LOCALES, UI_TEXT, landing_text, normalize_locale, service_content, ui_text,
+)
 from backend.app.services.rate_limit import landing_rate_limiter
 
 router = APIRouter()
@@ -92,6 +94,24 @@ def _not_found() -> HTMLResponse:
         "</div></body></html>"
     )
     return HTMLResponse(body, status_code=404)
+
+
+def _chat_copy(locale: str) -> str:
+    """Every string the corner chat panel needs, in one JSON blob.
+
+    Rendered into the page rather than fetched, so the panel opens with its own
+    language already in it — a spinner where the greeting should be is the worst
+    first impression a receptionist can make.
+
+    Raw strings, not ui_text(): the placeholders in "welcome" are filled in by
+    the browser once it knows the patient's name, so they have to survive the
+    trip intact — and ui_text would raise on the unsupplied {name} anyway.
+
+    "</" is escaped because this lands inside a <script> block: a translation
+    containing that pair would otherwise close the tag early and break the page.
+    """
+    table = {**UI_TEXT["en"], **UI_TEXT.get(normalize_locale(locale), {})}
+    return json.dumps(table, ensure_ascii=False).replace("</", "<\\/")
 
 
 def _clean(text: str | None, limit: int = 300) -> str:
@@ -251,6 +271,8 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
             "locale": locale,
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "ui": lambda key, **kw: ui_text(locale, key, **kw),
+            "chat_copy": _chat_copy(locale),
             "svc": lambda s: service_content(s, locale),
             # Editable copy, always complete: site_content.load fills every
             # declared key from defaults, so a template never sees a blank.
@@ -378,6 +400,8 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
             "locale": locale,
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "ui": lambda key, **kw: ui_text(locale, key, **kw),
+            "chat_copy": _chat_copy(locale),
             "svc": lambda s: service_content(s, locale),
             # Editable copy, always complete: site_content.load fills every
             # declared key from defaults, so a template never sees a blank.
@@ -424,6 +448,8 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
             "locale": locale,
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
+            "ui": lambda key, **kw: ui_text(locale, key, **kw),
+            "chat_copy": _chat_copy(locale),
             "svc": lambda s: service_content(s, locale),
             # Editable copy, always complete: site_content.load fills every
             # declared key from defaults, so a template never sees a blank.

@@ -54,6 +54,18 @@ export default function ClinicChatPage() {
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // The clinic's own typefaces, loaded only here. The staff app runs on Inter
+  // and has no reason to carry two more families for a page it never renders.
+  useEffect(() => {
+    const id = 'caredesk-brand-fonts';
+    if (document.getElementById(id)) return;
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Manrope:wght@300;400;500;600;700&display=swap';
+    document.head.appendChild(link);
+  }, []);
+
   const start = async (e) => {
     e.preventDefault();
     setErr('');
@@ -98,8 +110,8 @@ export default function ClinicChatPage() {
   if (notFound) return (
     <div style={sx.page}><div style={sx.card}>
       <div style={{ fontSize: 44 }}>🔍</div>
-      <h2 style={{ color: '#0f172a' }}>Không tìm thấy phòng khám</h2>
-      <p style={{ color: '#64748b' }}>Liên kết này không tồn tại hoặc đã thay đổi.</p>
+      <h2 style={{ fontFamily: C.serif, fontWeight: 500, color: C.ink }}>Không tìm thấy phòng khám</h2>
+      <p style={{ color: C.muted, fontSize: 14 }}>Liên kết này không tồn tại hoặc đã thay đổi.</p>
     </div></div>
   );
   if (!clinic) return <div style={sx.page}><div style={sx.card}>Đang tải...</div></div>;
@@ -111,8 +123,8 @@ export default function ClinicChatPage() {
           {clinic.logo_url
             ? <img src={clinic.logo_url} alt="" style={sx.logo} />
             : <div style={{ ...sx.logo, ...sx.logoFallback }}>{clinic.name.slice(0, 1)}</div>}
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{clinic.name}</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={sx.clinicName}>{clinic.name}</div>
             {(() => {
               // Show the location actually being booked, so the patient can see
               // at a glance they landed on the one they clicked.
@@ -120,15 +132,20 @@ export default function ClinicChatPage() {
               const line = picked
                 ? `${picked.name}${picked.address ? ` — ${picked.address}` : ''}`
                 : clinic.address;
-              return line ? <div style={{ fontSize: 12, opacity: 0.85 }}>{line}</div> : null;
+              return line ? <div style={{ fontSize: 11.5, color: 'rgba(245,241,234,.72)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line}</div> : null;
             })()}
           </div>
-          <select aria-label="Language" value={locale} onChange={(e) => setLocale(e.target.value)} style={{ marginLeft: 'auto' }}><option value="vi">VI</option><option value="en">EN</option><option value="ja">JA</option></select>
+          <select aria-label="Language" value={locale} onChange={(e) => setLocale(e.target.value)}
+            style={{ marginLeft: 'auto', flex: 'none', padding: '4px 6px', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, letterSpacing: '.06em', color: C.ivory, background: 'transparent', border: '1px solid rgba(245,241,234,.4)' }}>
+            <option value="vi" style={{ color: C.ink }}>VI</option>
+            <option value="en" style={{ color: C.ink }}>EN</option>
+            <option value="ja" style={{ color: C.ink }}>JA</option>
+          </select>
         </div>
 
         {!convId ? (
           <form onSubmit={start} style={sx.consent}>
-            <p style={{ color: '#475569', fontSize: 14, margin: '4px 0 8px' }}>
+            <p style={{ color: C.inkSoft, fontSize: 14, margin: '4px 0 8px', lineHeight: 1.6 }}>
               {t('intro')}
             </p>
             <input style={sx.input} placeholder={t('name')} value={lead.full_name}
@@ -136,7 +153,7 @@ export default function ClinicChatPage() {
             <input style={sx.input} placeholder={t('phone')} value={lead.phone}
               onChange={e => setLead({ ...lead, phone: e.target.value })} required />
             {clinic.branches?.length > 1 && (
-              <label style={{ fontSize: 12, color: '#64748b', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, color: C.muted, display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {t('branch')}
                 <select style={sx.input} value={branchId} onChange={e => setBranchId(e.target.value)}>
                   <option value="">{t('branchAny')}</option>
@@ -148,7 +165,7 @@ export default function ClinicChatPage() {
                 </select>
               </label>
             )}
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: '#475569' }}>
+            <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', fontSize: 13, color: C.inkSoft, lineHeight: 1.5 }}>
               <input type="checkbox" checked={lead.consent}
                 onChange={e => setLead({ ...lead, consent: e.target.checked })} />
               {t('consent')}
@@ -162,40 +179,59 @@ export default function ClinicChatPage() {
               {messages.map((m, i) => (
                 <div key={i} style={{
                   alignSelf: m.sender === 'patient' ? 'flex-end' : 'flex-start',
-                  maxWidth: '82%', padding: '9px 13px', borderRadius: 14, fontSize: 14, whiteSpace: 'pre-line', lineHeight: 1.45,
-                  background: m.sender === 'patient' ? '#0d9488' : '#fff',
-                  color: m.sender === 'patient' ? '#fff' : '#334155',
-                  border: m.sender === 'patient' ? 'none' : '1px solid #e2e8f0',
+                  maxWidth: '82%', padding: '10px 14px', fontSize: 14, whiteSpace: 'pre-line', lineHeight: 1.5,
+                  // A receptionist who has taken over is marked in gold, so the
+                  // patient can tell a person from the assistant at a glance.
+                  background: m.sender === 'patient' ? C.olive : m.sender === 'agent' ? '#FBF6EA' : C.paper,
+                  color: m.sender === 'patient' ? C.ivory : C.ink,
+                  border: m.sender === 'patient' ? 'none'
+                    : `1px solid ${m.sender === 'agent' ? C.gold : C.line}`,
                 }}>{m.content}</div>
               ))}
-              {sending && <div style={{ fontSize: 12, color: '#94a3b8' }}>{t('replying')}</div>}
+              {sending && <div style={{ fontSize: 12.5, color: C.muted, padding: '0 4px' }}>{t('replying')}</div>}
               <div ref={endRef} />
             </div>
             <form onSubmit={send} style={sx.inputBar}>
               <input style={{ ...sx.input, margin: 0, flex: 1 }} placeholder={t('input')} value={input}
                 onChange={e => setInput(e.target.value)} />
-              <button type="submit" style={{ ...sx.btn, width: 'auto', margin: 0, padding: '10px 18px' }}
+              <button type="submit" style={{ ...sx.btn, width: 'auto', margin: 0, padding: '0 18px', opacity: (sending || !input.trim()) ? 0.5 : 1 }}
                 disabled={sending || !input.trim()}>{t('send')}</button>
             </form>
           </>
         )}
       </div>
-      <div style={{ marginTop: 12, fontSize: 11, color: '#94a3b8' }}>Được vận hành bởi CareDesk AI</div>
+      <div style={{ marginTop: 14, fontSize: 11, letterSpacing: '.08em', color: C.muted }}>Được vận hành bởi CareDesk AI</div>
     </div>
   );
 }
 
+/**
+ * Same palette and type as the public landing pages (see templates/base.html):
+ * ivory ground, charcoal text, deep olive as the only strong colour. A patient
+ * who clicks through from a clinic's page must not feel handed to a different
+ * company halfway through booking — the teal gradient this used to wear read as
+ * a generic SaaS chat bolted onto an editorial site.
+ */
+const C = {
+  ivory: '#F5F1EA', paper: '#FFFDF9', ink: '#20201D', inkSoft: '#4A4A44',
+  muted: '#8A857B', olive: '#3F493D', oliveLt: '#5C6858', gold: '#B99A5B',
+  line: '#E0D9CC',
+  serif: '"Cormorant Garamond",Georgia,"Times New Roman",serif',
+  sans: '"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
+};
+
 const sx = {
-  page: { minHeight: '100vh', background: 'linear-gradient(135deg,#0f172a,#115e59)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  card: { background: '#fff', borderRadius: 16, padding: 40, maxWidth: 420, textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,.2)' },
-  chatCard: { width: '100%', maxWidth: 440, background: '#f8fafc', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,.25)', display: 'flex', flexDirection: 'column', height: '78vh', maxHeight: 680 },
-  header: { display: 'flex', gap: 12, alignItems: 'center', padding: '16px 18px', background: '#0d9488', color: '#fff' },
-  logo: { width: 42, height: 42, borderRadius: 10, objectFit: 'cover' },
-  logoFallback: { background: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 20 },
-  consent: { padding: 20, display: 'flex', flexDirection: 'column', gap: 10 },
-  input: { width: '100%', padding: '10px 12px', fontSize: 14, border: '1px solid #cbd5e1', borderRadius: 8, boxSizing: 'border-box' },
-  btn: { width: '100%', padding: 12, fontSize: 14, fontWeight: 600, color: '#fff', background: 'linear-gradient(135deg,#14b8a6,#0f766e)', border: 'none', borderRadius: 8, cursor: 'pointer' },
-  err: { color: '#dc2626', fontSize: 13 },
-  msgs: { flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 9 },
-  inputBar: { display: 'flex', gap: 8, padding: 12, borderTop: '1px solid #e2e8f0', background: '#fff' },
+  page: { minHeight: '100vh', background: C.ivory, color: C.ink, fontFamily: C.sans, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  card: { background: C.paper, border: `1px solid ${C.line}`, padding: 40, maxWidth: 420, textAlign: 'center' },
+  chatCard: { width: '100%', maxWidth: 440, background: C.ivory, border: `1px solid ${C.line}`, overflow: 'hidden', boxShadow: '0 20px 50px rgba(32,32,29,.14)', display: 'flex', flexDirection: 'column', height: '78vh', maxHeight: 680 },
+  header: { display: 'flex', gap: 12, alignItems: 'center', padding: '16px 18px', background: C.olive, color: C.ivory },
+  logo: { width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flex: 'none' },
+  logoFallback: { background: 'rgba(245,241,234,.16)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: C.serif, fontSize: 20 },
+  clinicName: { fontFamily: C.serif, fontSize: 18, fontWeight: 500, lineHeight: 1.2 },
+  consent: { padding: 20, display: 'flex', flexDirection: 'column', gap: 11, overflowY: 'auto' },
+  input: { width: '100%', padding: '11px 12px', fontFamily: 'inherit', fontSize: 14, color: C.ink, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 0, boxSizing: 'border-box' },
+  btn: { width: '100%', padding: 14, fontFamily: 'inherit', fontSize: 13, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: C.ivory, background: C.olive, border: `1px solid ${C.olive}`, cursor: 'pointer' },
+  err: { color: '#9F3A38', fontSize: 13 },
+  msgs: { flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 },
+  inputBar: { display: 'flex', gap: 8, padding: 12, borderTop: `1px solid ${C.line}`, background: C.paper },
 };

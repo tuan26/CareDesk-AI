@@ -273,7 +273,7 @@ footer a{color:rgba(245,241,234,.9)}
       <div>
         <div style="font-weight:600;color:var(--ivory);margin-bottom:10px">{{ t('book_title') }}</div>
         <div style="margin-bottom:6px"><a href="/book/{{ brand.slug }}/dat-lich">{{ t('form_cta') }}</a></div>
-        <div><a href="{{ chat_href }}">{{ t('book_cta') }}</a></div>
+        <div><a href="{{ chat_href }}" data-cd-open>{{ t('book_cta') }}</a></div>
       </div>
     </div>
     <div class="footer-bottom">{{ t('powered') }}</div>
@@ -284,6 +284,8 @@ footer a{color:rgba(245,241,234,.9)}
 <div class="sticky-cta">
   <a class="btn" href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
 </div>
+
+{% include "chat_popup.html" %}
 
 </body>
 </html>

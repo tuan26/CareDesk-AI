@@ -1,0 +1,359 @@
+{#
+  The assistant, in the corner of the page the visitor is already reading.
+
+  Sending someone to a separate chat page costs the thing they were looking at.
+  They were half way down the price list, or reading the doctor's credentials,
+  and the question they wanted to ask was *about that*. A full-page navigation
+  throws it away and puts an empty form in its place — so the question arrives
+  with no context, or does not arrive at all.
+
+  Progressive enhancement, deliberately: every launcher is a real <a> pointing
+  at the full /chat page. Script runs, it opens here; script fails or is blocked,
+  the link still works. Nothing is JS-only, which is the same rule /dat-lich
+  follows.
+
+  The clinic is resolved on first open rather than at render, so a page nobody
+  chats on costs nothing, and `bookable` stays computed in exactly one place
+  (public.py) instead of being duplicated into a template.
+#}
+<div id="cd-chat" data-brand="{{ brand.slug }}" data-branch="{{ branch.slug if branch else '' }}"
+     data-locale="{{ locale }}" data-full="{{ chat_href }}">
+  <button type="button" id="cd-launcher" aria-expanded="false" aria-controls="cd-panel"
+          title="{{ ui('open_chat') }}">
+    <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24" aria-hidden="true">
+      <path d="M12 2C6.5 2 2 6.1 2 11.2c0 2.8 1.4 5.4 3.6 7.1-.2 1-.8 2.7-1.5 3.9 0 0-.2.2 0 .3.2.1.5-.1.7-.2 1.7-1 3.6-2.1 4.4-2.6 1 .2 1.9.3 2.8.3 5.5 0 10-4.1 10-9.2S17.5 2 12 2z"/>
+    </svg>
+    <span>{{ ui('open_chat') }}</span>
+  </button>
+
+  {# A <div>, not <section>: the page styles every section with 76px of vertical
+     padding and a rule underneath, which a floating panel inherits as a white
+     band above and below its own header. role="dialog" carries the meaning. #}
+  <div id="cd-panel" role="dialog" aria-modal="false" aria-label="{{ ui('open_chat') }}" hidden>
+    <div id="cd-head">
+      <div id="cd-mark">{{ brand.name[:1] }}</div>
+      <div id="cd-who">
+        <strong>{{ brand.name }}</strong>
+        <span id="cd-where">{{ branch.address if branch else (brand.address or '') }}</span>
+      </div>
+      <button type="button" id="cd-close" aria-label="{{ ui('close_chat') }}">&times;</button>
+    </div>
+    <div id="cd-body"><p id="cd-boot" class="cd-note">…</p></div>
+  </div>
+</div>
+
+<script type="application/json" id="cd-copy">{{ chat_copy | safe }}</script>
+
+<style>
+#cd-chat{position:fixed;right:22px;bottom:22px;z-index:60;font-family:var(--sans)}
+
+#cd-launcher{display:inline-flex;align-items:center;gap:10px;padding:14px 22px;border:0;
+  background:var(--olive);color:var(--ivory);font-family:inherit;font-size:13px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;cursor:pointer;
+  box-shadow:0 10px 30px rgba(32,32,29,.22);transition:background .2s,transform .2s}
+#cd-launcher:hover{background:var(--ink);transform:translateY(-1px)}
+#cd-launcher[hidden]{display:none}
+
+/* padding/border reset as well as the div: the page's section rule is not the
+   only global that could reach in here. */
+#cd-panel{display:flex;flex-direction:column;width:380px;height:min(76vh,620px);
+  padding:0;background:var(--paper);border:1px solid var(--line);
+  box-shadow:0 24px 60px rgba(32,32,29,.26)}
+#cd-panel[hidden]{display:none}
+
+#cd-head{display:flex;align-items:center;gap:12px;padding:16px 18px;
+  background:var(--olive);color:var(--ivory)}
+#cd-mark{width:38px;height:38px;border-radius:50%;flex:none;display:flex;
+  align-items:center;justify-content:center;background:rgba(245,241,234,.16);
+  font-family:var(--serif);font-size:19px}
+#cd-who{min-width:0;line-height:1.3}
+#cd-who strong{display:block;font-family:var(--serif);font-size:17px;font-weight:500}
+#cd-where{display:block;font-size:11.5px;color:rgba(245,241,234,.72);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cd-close{margin-left:auto;background:none;border:0;color:inherit;font-size:26px;
+  line-height:1;cursor:pointer;opacity:.8;padding:0 2px}
+#cd-close:hover{opacity:1}
+
+#cd-body{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--ivory)}
+.cd-note{margin:0;padding:16px 18px;font-size:13.5px;color:var(--ink-soft)}
+.cd-err{color:#9F3A38;font-size:13px;margin:0}
+
+#cd-form{padding:18px;display:flex;flex-direction:column;gap:11px;overflow-y:auto}
+#cd-form label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:5px}
+#cd-form input[type=text],#cd-form input[type=tel],#cd-form select{
+  width:100%;padding:11px 12px;font-family:inherit;font-size:14px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line)}
+#cd-form input:focus,#cd-form select:focus{outline:0;border-color:var(--olive-lt)}
+.cd-agree{flex-direction:row!important;align-items:flex-start;gap:9px!important;
+  font-size:13px!important;color:var(--ink-soft)!important;line-height:1.5}
+.cd-agree input{margin-top:3px;flex:none}
+#cd-form button{padding:14px;border:1px solid var(--olive);background:var(--olive);
+  color:var(--ivory);font-family:inherit;font-size:13px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;cursor:pointer}
+#cd-form button:disabled{opacity:.55;cursor:not-allowed}
+
+#cd-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.cd-msg{max-width:82%;padding:10px 14px;font-size:14px;line-height:1.5;white-space:pre-line}
+.cd-bot{align-self:flex-start;background:var(--paper);border:1px solid var(--line);color:var(--ink)}
+.cd-agent{align-self:flex-start;background:#FBF6EA;border:1px solid var(--gold);color:var(--ink)}
+.cd-me{align-self:flex-end;background:var(--olive);color:var(--ivory)}
+.cd-typing{align-self:flex-start;font-size:12.5px;color:var(--muted);padding:0 4px}
+#cd-handoff{padding:10px 16px;background:#FBF6EA;border-top:1px solid var(--gold);
+  font-size:12.5px;color:var(--ink-soft)}
+#cd-bar{display:flex;gap:8px;padding:12px;background:var(--paper);border-top:1px solid var(--line)}
+#cd-bar input{flex:1;min-width:0;padding:11px 12px;font-family:inherit;font-size:14px;
+  color:var(--ink);background:var(--paper);border:1px solid var(--line)}
+#cd-bar input:focus{outline:0;border-color:var(--olive-lt)}
+#cd-bar button{padding:0 18px;border:1px solid var(--olive);background:var(--olive);
+  color:var(--ivory);font-family:inherit;font-size:12.5px;font-weight:600;letter-spacing:.05em;
+  text-transform:uppercase;cursor:pointer}
+#cd-bar button:disabled{opacity:.5;cursor:not-allowed}
+
+/* Full width on a phone. The launcher sits above the sticky booking bar; once
+   the panel is open that bar is both redundant and in the way of the thumb, so
+   it stands down and the panel takes the whole corner. */
+@media(max-width:860px){
+  #cd-chat{right:12px;left:12px;bottom:84px}
+  #cd-launcher{width:100%;justify-content:center}
+  #cd-panel{width:auto;height:min(72vh,560px)}
+  body.cd-open .sticky-cta{display:none}
+  body.cd-open #cd-chat{bottom:12px}
+}
+{# The space after the brace is load-bearing: "{#" opens a Jinja comment. #}
+@media(prefers-reduced-motion:reduce){ #cd-launcher{transition:none} }
+</style>
+
+<script>
+(function () {
+  var root = document.getElementById('cd-chat');
+  if (!root || !window.fetch) return;          // no fetch: leave the links alone
+
+  var copy = {};
+  try { copy = JSON.parse(document.getElementById('cd-copy').textContent); } catch (e) { return; }
+  var t = function (key, values) {
+    return String(copy[key] || key).replace(/\{(\w+)\}/g, function (_, n) {
+      return (values && values[n]) || '';
+    });
+  };
+
+  var API = '/api/v1';
+  var brand = root.dataset.brand, branchSlug = root.dataset.branch;
+  var launcher = document.getElementById('cd-launcher');
+  var panel = document.getElementById('cd-panel');
+  var body = document.getElementById('cd-body');
+
+  var clinic = null, convId = null, token = null, lastId = 0, poll = null;
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function open() {
+    panel.hidden = false;
+    launcher.hidden = true;
+    launcher.setAttribute('aria-expanded', 'true');
+    document.body.classList.add('cd-open');
+    if (!clinic) resolve();
+    var focusable = panel.querySelector('input, button:not(#cd-close)');
+    if (focusable) focusable.focus();
+  }
+
+  function close() {
+    panel.hidden = true;
+    launcher.hidden = false;
+    launcher.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('cd-open');
+    launcher.focus();
+  }
+
+  launcher.addEventListener('click', open);
+  document.getElementById('cd-close').addEventListener('click', close);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !panel.hidden) close();
+  });
+
+  // Every "talk to the assistant" link on the page opens this instead of
+  // navigating — but only now that the script has run and can honour it.
+  var links = document.querySelectorAll('[data-cd-open]');
+  for (var i = 0; i < links.length; i++) {
+    links[i].addEventListener('click', function (e) {
+      e.preventDefault();
+      open();
+    });
+  }
+
+  function resolve() {
+    body.innerHTML = '<p class="cd-note">' + esc(t('connecting')) + '</p>';
+    var url = API + '/public/resolve/' + encodeURIComponent(brand) +
+              (branchSlug ? '/' + encodeURIComponent(branchSlug) : '');
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error('resolve');
+      return r.json();
+    }).then(function (data) {
+      clinic = data;
+      form();
+    }).catch(function () {
+      // Do not strand them: the full page is a working way to reach the clinic.
+      body.innerHTML = '<p class="cd-note">' + esc(t('connection_error')) +
+        ' <a href="' + esc(root.dataset.full) + '">' + esc(t('open_chat')) + '</a></p>';
+    });
+  }
+
+  function form() {
+    var picker = '';
+    var list = clinic.branches || [];
+    // Only worth asking when there is a real choice and the URL did not already
+    // make it.
+    if (!clinic.branch && list.length > 1) {
+      var opts = '<option value="">' + esc(t('branch_any')) + '</option>';
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        opts += '<option value="' + b.id + '"' + (b.bookable ? '' : ' disabled') + '>' +
+          esc(b.name) + (b.address ? ' — ' + esc(b.address) : '') +
+          (b.bookable ? '' : ' (' + esc(t('branch_full')) + ')') + '</option>';
+      }
+      picker = '<label>' + esc(t('branch')) + '<select id="cd-branch">' + opts + '</select></label>';
+    }
+
+    body.innerHTML =
+      '<form id="cd-form">' +
+        '<p class="cd-note" style="padding:0">' + esc(t('consent_intro')) + '</p>' +
+        '<label>' + esc(t('name')) + '<input type="text" id="cd-name" required maxlength="80" autocomplete="name"></label>' +
+        '<label>' + esc(t('phone')) + '<input type="tel" id="cd-phone" required inputmode="tel" autocomplete="tel" placeholder="0901234567"></label>' +
+        picker +
+        '<label class="cd-agree"><input type="checkbox" id="cd-ok" required>' + esc(t('consent')) + '</label>' +
+        '<p class="cd-err" id="cd-formerr" hidden></p>' +
+        '<button type="submit">' + esc(t('start')) + '</button>' +
+      '</form>';
+
+    document.getElementById('cd-form').addEventListener('submit', start);
+  }
+
+  function start(e) {
+    e.preventDefault();
+    var name = document.getElementById('cd-name').value.trim();
+    var phone = document.getElementById('cd-phone').value.trim();
+    var picked = document.getElementById('cd-branch');
+    var button = e.target.querySelector('button');
+    var problem = document.getElementById('cd-formerr');
+
+    button.disabled = true;
+    button.textContent = t('connecting');
+    problem.hidden = true;
+
+    fetch(API + '/chat/conversations', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' },
+                             token ? { 'X-CareDesk-Session': token } : {}),
+      body: JSON.stringify({
+        full_name: name, phone: phone, source: 'web', consent_given: true,
+        clinic_id: clinic.clinic_id, locale: root.dataset.locale,
+        branch_id: clinic.branch ? clinic.branch.id
+                                 : (picked && picked.value ? Number(picked.value) : null)
+      })
+    }).then(function (r) {
+      return r.json().then(function (d) {
+        if (!r.ok) throw new Error(d.detail || 'start');
+        return d;
+      });
+    }).then(function (data) {
+      convId = data.id;
+      token = data.public_session_token || null;
+      conversation();
+      say('bot', t('welcome', { name: name }));
+      poll = setInterval(pollAgent, 4000);
+    }).catch(function (err) {
+      problem.textContent = err.message === 'start' ? t('connection_error') : err.message;
+      problem.hidden = false;
+      button.disabled = false;
+      button.textContent = t('start');
+    });
+  }
+
+  function conversation() {
+    body.innerHTML =
+      '<div id="cd-log"></div>' +
+      '<div id="cd-handoff" hidden></div>' +
+      '<form id="cd-bar">' +
+        '<input type="text" id="cd-msg" autocomplete="off" placeholder="' + esc(t('placeholder')) + '">' +
+        '<button type="submit">' + esc(t('send')) + '</button>' +
+      '</form>';
+    document.getElementById('cd-bar').addEventListener('submit', send);
+    document.getElementById('cd-msg').focus();
+  }
+
+  function say(who, text) {
+    var log = document.getElementById('cd-log');
+    var bubble = document.createElement('div');
+    bubble.className = 'cd-msg ' + (who === 'patient' ? 'cd-me' : who === 'agent' ? 'cd-agent' : 'cd-bot');
+    bubble.textContent = text;
+    log.appendChild(bubble);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function send(e) {
+    e.preventDefault();
+    var field = document.getElementById('cd-msg');
+    var text = field.value.trim();
+    if (!text) return;
+    field.value = '';
+    say('patient', text);
+
+    var log = document.getElementById('cd-log');
+    var waiting = document.createElement('div');
+    waiting.className = 'cd-typing';
+    waiting.textContent = t('replying');
+    log.appendChild(waiting);
+    log.scrollTop = log.scrollHeight;
+
+    fetch(API + '/chat/conversations/' + convId + '/messages', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' },
+                             token ? { 'X-CareDesk-Session': token } : {}),
+      body: JSON.stringify({ content: text })
+    }).then(function (r) {
+      token = r.headers.get('X-CareDesk-Session') || token;
+      return r.json();
+    }).then(function (data) {
+      waiting.remove();
+      if (data.id) lastId = Math.max(lastId, data.id);
+      // After a handoff the API echoes the patient's own message back, so only
+      // the assistant's replies get drawn here.
+      if (data.sender === 'bot' && data.content) say('bot', data.content);
+      var meta = data.evaluation_metadata || {};
+      if (meta.safety_triggered || meta.quota_exceeded) {
+        var banner = document.getElementById('cd-handoff');
+        banner.textContent = t('handoff');
+        banner.hidden = false;
+        field.placeholder = t('agent_placeholder');
+      }
+    }).catch(function () {
+      waiting.remove();
+      say('bot', t('send_error'));
+    });
+  }
+
+  // A receptionist who takes over answers from the dashboard, and the patient is
+  // still sitting in this panel waiting for a human.
+  function pollAgent() {
+    if (!convId) return;
+    fetch(API + '/chat/conversations/' + convId + '/messages?after_id=' + lastId, {
+      headers: token ? { 'X-CareDesk-Session': token } : {}
+    }).then(function (r) {
+      if (!r.ok) throw new Error('poll');
+      token = r.headers.get('X-CareDesk-Session') || token;
+      return r.json();
+    }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id > lastId) lastId = list[i].id;
+        if (list[i].sender === 'agent') {
+          say('agent', list[i].content);
+          document.getElementById('cd-handoff').hidden = true;
+        }
+      }
+    }).catch(function () { /* next tick retries */ });
+  }
+})();
+</script>
