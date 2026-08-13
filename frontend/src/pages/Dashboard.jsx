@@ -100,6 +100,145 @@ function RetentionCard({ r }) {
   );
 }
 
+const fmtShort = (v) => {
+  if (!v) return '0';
+  if (v >= 1e9) return (v / 1e9).toFixed(1).replace(/\.0$/, '') + ' tỷ';
+  if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'tr';
+  if (v >= 1e3) return Math.round(v / 1e3) + 'k';
+  return String(Math.round(v));
+};
+
+/**
+ * The screen a clinic owner opens to decide next month's budget.
+ *
+ * Deliberately absent: impressions, clicks, page views. Those are numbers the
+ * ad platform already shows and nobody can act on — this is a clinic operating
+ * system, not an analytics tool. Every row here ends in money.
+ */
+function GrowthOverview({ data }) {
+  const t = data.totals;
+  const ai = data.ai || {};
+  const conf = data.confirmation || {};
+  const channels = data.channels || [];
+  const revenuePerLead = t.leads ? t.revenue / t.leads : 0;
+
+  // Bars are drawn against the widest stage rather than a fixed scale, so the
+  // drop-off between steps is what the eye reads.
+  const widest = Math.max(t.leads, 1);
+  const stages = [
+    { label: 'Lead', value: t.leads, pct: 100 },
+    { label: 'Đặt lịch', value: t.bookings, pct: (t.bookings / widest) * 100,
+      drop: t.lead_to_booking_percent },
+    { label: 'Đến khám', value: t.visits, pct: (t.visits / widest) * 100,
+      drop: t.booking_to_visit_percent },
+  ];
+
+  return (
+    <div className="card-table-wrapper" style={{ padding: 24, marginBottom: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 16 }}>Tăng trưởng</h2>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {data.range.start_date} → {data.range.end_date}
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 16, margin: '18px 0 26px' }}>
+        {[
+          ['Lead', t.leads, null],
+          ['Đặt lịch', t.bookings, `${t.lead_to_booking_percent}% từ lead`],
+          ['Đến khám', t.visits, `${t.booking_to_visit_percent}% từ đặt lịch`],
+          ['Doanh thu', fmtShort(t.revenue) + 'đ', `${fmtShort(revenuePerLead)}đ / lead`],
+        ].map(([label, value, sub]) => (
+          <div key={label}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--dark-color)' }}>{value}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{label}</div>
+            {sub && <div style={{ fontSize: 11.5, color: '#0d9488', marginTop: 2 }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginBottom: 26 }}>
+        {stages.map((s) => (
+          <div key={s.label} style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 3 }}>
+              <span><b>{s.value}</b> {s.label}</span>
+              {s.drop != null && <span style={{ color: 'var(--text-muted)' }}>↓ {s.drop}%</span>}
+            </div>
+            <div style={{ height: 10, background: '#f1f5f9', borderRadius: 5 }}>
+              <div style={{ height: '100%', width: `${Math.max(s.pct, 1)}%`, borderRadius: 5,
+                            background: 'linear-gradient(90deg,#0d9488,#14b8a6)' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* A slow callback desk and a weak ad channel look identical in a
+          conversion rate. This is the line that tells them apart. */}
+      {conf.requested > 0 && conf.median_minutes != null && (
+        <div style={{
+          background: conf.median_minutes > 60 ? '#fef2f2' : '#f0fdfa',
+          border: `1px solid ${conf.median_minutes > 60 ? '#fecaca' : '#99f6e4'}`,
+          borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 22,
+        }}>
+          Trung vị thời gian xác nhận lịch: <b>{conf.median_minutes} phút</b>
+          {' · '}đã xác nhận {conf.confirmed}/{conf.requested}
+          {conf.over_1h > 0 && <> · <b>{conf.over_1h}</b> ca chờ quá 1 giờ</>}
+          {conf.median_minutes > 60 && (
+            <div style={{ marginTop: 4, color: '#991b1b' }}>
+              Khách đợi lâu sẽ đặt chỗ khác. Đây là vấn đề tốc độ gọi lại, không phải vấn đề quảng cáo.
+            </div>
+          )}
+        </div>
+      )}
+
+      <h3 style={{ fontSize: 14, margin: '0 0 10px' }}>Khách đến từ đâu</h3>
+      {channels.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          Chưa có dữ liệu. Gắn thêm <code>?utm_source=facebook&amp;utm_campaign=...</code> vào
+          link quảng cáo để biết kênh nào tạo ra doanh thu.
+        </p>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Kênh</th><th style={{ textAlign: 'right' }}>Lead</th>
+              <th style={{ textAlign: 'right' }}>Đặt lịch</th>
+              <th style={{ textAlign: 'right' }}>Đến</th>
+              <th style={{ textAlign: 'right' }}>Doanh thu</th>
+              <th style={{ textAlign: 'right' }}>DT / lead</th>
+            </tr>
+          </thead>
+          <tbody>
+            {channels.map((c) => (
+              <tr key={c.channel + (c.campaign || '')}>
+                <td>
+                  <b>{c.channel}</b>
+                  {c.campaign && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{c.campaign}</div>}
+                </td>
+                <td style={{ textAlign: 'right' }}>{c.leads}</td>
+                <td style={{ textAlign: 'right' }}>{c.bookings}</td>
+                <td style={{ textAlign: 'right' }}>{c.visits}</td>
+                <td style={{ textAlign: 'right' }}>{fmtShort(c.revenue)}đ</td>
+                {/* The column to compare against cost per lead — everything
+                    else on the row is a step towards it. */}
+                <td style={{ textAlign: 'right', fontWeight: 700, color: '#0d9488' }}>
+                  {fmtShort(c.revenue_per_lead)}đ
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--border-color)', fontSize: 13, color: 'var(--text-muted)' }}>
+        Trong đó trợ lý AI: <b>{ai.conversations || 0}</b> hội thoại →{' '}
+        <b>{ai.leads_captured || 0}</b> lead → <b>{ai.bookings_generated || 0}</b> lịch hẹn
+        {' '}({ai.conversion_percent || 0}%) → <b>{fmtShort(ai.revenue || 0)}đ</b>
+      </div>
+    </div>
+  );
+}
+
 function CopilotBox() {
   const [messages, setMessages] = useState([
     { role: 'bot', text: "Chào bạn! Hỏi tôi: 'Hôm nay có bao nhiêu lịch hẹn?', 'Doanh thu tháng này?', 'Tỷ lệ no-show?'..." }
@@ -176,6 +315,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ appointmentsTodayCount: 0, conversationsCount: 0, pendingAppointmentsCount: 0, handoffCount: 0 });
   const [readiness, setReadiness] = useState(null);
   const [flags, setFlags] = useState({});
+  const [funnel, setFunnel] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -209,6 +349,13 @@ export default function Dashboard() {
 
         const featRes = await fetch(`${API_BASE}/clinic/features`, { headers });
         if (featRes.ok) setFlags((await featRes.json()).flags || {});
+
+        // Lead -> Booking -> Visit -> Revenue, by where the patient came from.
+        // Owner-only: it is a spending decision, not an operational one.
+        if (manager) {
+          const fRes = await fetch(`${API_BASE}/reports/funnel`, { headers });
+          if (fRes.ok) setFunnel(await fRes.json());
+        }
 
         // Operational data
         const [apptsRes, convsRes] = await Promise.all([
@@ -290,6 +437,8 @@ export default function Dashboard() {
           is the slow one: the cohort needs ~3 months before it says anything,
           and pretending otherwise invites an argument at the review. */}
       {isManager && report?.retention && <RetentionCard r={report.retention} />}
+
+      {isManager && funnel && <GrowthOverview data={funnel} />}
 
       {/* Revenue hero cards (owner only) */}
       {isManager && t && (

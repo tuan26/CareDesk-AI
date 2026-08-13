@@ -142,6 +142,56 @@ def build(db: Session, clinic_id: Optional[int],
     return funnel
 
 
+def confirmation_speed(db: Session, clinic_id: Optional[int],
+                      start_date: Optional[date] = None,
+                      end_date: Optional[date] = None) -> dict:
+    """How fast the clinic answers a booking request, and what it costs them.
+
+    This exists because "Facebook is underperforming" and "we take four hours to
+    ring people back" look identical in a conversion rate and have completely
+    different fixes. One is a budget decision; the other is a rota.
+    """
+    end_date = end_date or date.today()
+    start_date = start_date or (end_date - timedelta(days=29))
+    start = datetime.combine(start_date, datetime.min.time())
+    end = datetime.combine(end_date, datetime.max.time())
+
+    query = db.query(Appointment).filter(
+        Appointment.booking_requested_at >= start,
+        Appointment.booking_requested_at <= end)
+    if clinic_id:
+        query = query.filter(Appointment.clinic_id == clinic_id)
+    requested = query.all()
+    if not requested:
+        return {"requested": 0, "confirmed": 0, "confirm_rate_percent": 0.0,
+                "median_minutes": None, "over_1h": 0}
+
+    waits = []
+    for appt in requested:
+        if not appt.booking_confirmed_at:
+            continue
+        asked = appt.booking_requested_at.replace(tzinfo=None)
+        answered = appt.booking_confirmed_at.replace(tzinfo=None)
+        waits.append(max(0, (answered - asked).total_seconds() / 60))
+
+    # Median, not mean: one request confirmed three days late would drag an
+    # average far past anything a receptionist would recognise as their day.
+    median = None
+    if waits:
+        ordered = sorted(waits)
+        mid = len(ordered) // 2
+        median = round(ordered[mid] if len(ordered) % 2 else
+                       (ordered[mid - 1] + ordered[mid]) / 2)
+
+    return {
+        "requested": len(requested),
+        "confirmed": len(waits),
+        "confirm_rate_percent": round(len(waits) / len(requested) * 100, 1),
+        "median_minutes": median,
+        "over_1h": sum(1 for w in waits if w > 60),
+    }
+
+
 def ai_contribution(db: Session, clinic_id: Optional[int],
                     start_date: Optional[date] = None,
                     end_date: Optional[date] = None) -> dict:

@@ -271,9 +271,24 @@ class PatientLead(Base):
     utm_medium = Column(String, nullable=True)                 # cpc | organic | qr
     utm_campaign = Column(String, nullable=True, index=True)   # "pico-thang-8"
     utm_content = Column(String, nullable=True)                # which creative
+    utm_term = Column(String, nullable=True)                   # search keyword
+    click_id = Column(String, nullable=True)                   # fbclid / gclid / ttclid
     referrer = Column(String, nullable=True)                   # where they came from
     landing_path = Column(String, nullable=True)               # which page caught them
     first_seen_at = Column(DateTime(timezone=True), nullable=True)
+
+    # --- Latest touch ----------------------------------------------------
+    # Overwritten on every visit, and deliberately never used for acquisition
+    # credit. It answers a different question: which touchpoint brought them
+    # back on the day they finally converted. Keeping both means assisted
+    # conversion can be analysed later without disturbing the original
+    # attribution — the first-touch fields above stay immutable once set.
+    latest_utm_source = Column(String, nullable=True, index=True)
+    latest_utm_medium = Column(String, nullable=True)
+    latest_utm_campaign = Column(String, nullable=True)
+    latest_landing_path = Column(String, nullable=True)
+    latest_touch_at = Column(DateTime(timezone=True), nullable=True)
+    touch_count = Column(Integer, nullable=False, default=1)
     external_id = Column(String, index=True, nullable=True)  # user id on Zalo/Facebook
     consent_given = Column(Boolean, default=False)
     consent_timestamp = Column(DateTime(timezone=True), nullable=True)
@@ -362,6 +377,18 @@ class Appointment(Base):
     # two instead — see api/endpoints/queue.py.
     arrived_at = Column(DateTime(timezone=True), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
+
+    # --- Lifecycle -------------------------------------------------------
+    # Marketing and operations disagree about what "a booking" means, and both
+    # are right. Analytics counts a booking the moment the patient asked, so a
+    # channel is never penalised for how long the clinic took to call back.
+    # Operations needs the whole chain, and the gap between the first two is a
+    # KPI in its own right: "you are losing bookings because confirmation takes
+    # four hours" is a fixable problem that looks like a bad ad campaign.
+    booking_requested_at = Column(DateTime(timezone=True), nullable=True)
+    booking_confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text, nullable=True)
     booking_source = Column(String, default="staff")  # staff | ai_chat | ai_followup | campaign | referral
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)

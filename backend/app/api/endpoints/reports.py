@@ -226,4 +226,8 @@ def get_funnel(
         # patient" but "did the subscription earn its keep".
         "ai": funnel_service.ai_contribution(db, current_user.clinic_id,
                                              start_date, end_date),
+        # Separates a weak channel from a slow callback desk — the two look the
+        # same in a conversion rate and need opposite responses.
+        "confirmation": funnel_service.confirmation_speed(
+            db, current_user.clinic_id, start_date, end_date),
     }

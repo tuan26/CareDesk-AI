@@ -127,9 +127,12 @@ def test_first_touch_is_never_overwritten(db):
                     cookies={attribution.COOKIE_NAME: stored}),
         second)
 
-    assert kept["utm_source"] == "facebook"
-    assert kept["utm_campaign"] == "pico-thang-8"
-    assert attribution.COOKIE_NAME not in second.cookies, "không được ghi đè cookie"
+    assert kept["first"]["utm_source"] == "facebook"
+    assert kept["first"]["utm_campaign"] == "pico-thang-8"
+    # The later click is not discarded — it becomes latest touch, which answers
+    # a different question and must never feed acquisition credit.
+    assert kept["latest"]["utm_source"] == "google"
+    assert kept["touches"] == 2
 
 
 def test_a_direct_visit_does_not_burn_the_cookie(db):
@@ -289,3 +292,119 @@ def test_another_clinics_patients_are_invisible(db, clinic):
     db.commit()
 
     assert funnel.build(db, clinic["clinic"].id).leads == 0
+
+
+# --- latest touch: kept, but never allowed to claim credit --------------------
+
+def test_latest_touch_records_the_return_visit(db):
+    first = FakeResponse()
+    attribution.remember(FakeRequest(params={"utm_source": "facebook",
+                                             "utm_campaign": "pico-thang-8"}), first)
+
+    second = FakeResponse()
+    stored = attribution.remember(
+        FakeRequest(params={"utm_source": "google", "utm_medium": "organic"},
+                    cookies={attribution.COOKIE_NAME: first.cookies[attribution.COOKIE_NAME]}),
+        second)
+
+    assert stored["first"]["utm_source"] == "facebook"
+    assert stored["latest"]["utm_source"] == "google"
+
+
+def test_a_lead_carries_both_touches(db, clinic):
+    first = FakeResponse()
+    attribution.remember(FakeRequest(params={"utm_source": "facebook",
+                                             "utm_campaign": "pico-thang-8"}), first)
+    second = FakeResponse()
+    stored = attribution.remember(
+        FakeRequest(path="/book/caredesk/dat-lich",
+                    params={"utm_source": "google", "utm_campaign": "retarget"},
+                    cookies={attribution.COOKIE_NAME: first.cookies[attribution.COOKIE_NAME]}),
+        second)
+
+    patient = PatientLead(clinic_id=clinic["clinic"].id, full_name="Hai diem cham",
+                          consent_given=True)
+    attribution.apply_to_lead(patient, stored)
+
+    assert patient.utm_source == "facebook"
+    assert patient.utm_campaign == "pico-thang-8"
+    assert patient.latest_utm_source == "google"
+    assert patient.latest_utm_campaign == "retarget"
+    assert patient.touch_count == 2
+
+
+def test_the_channel_report_ignores_latest_touch(db, clinic):
+    """The whole reason the two are stored separately."""
+    patient = _lead(db, clinic, "Retarget", utm_source="facebook",
+                    latest_utm_source="google")
+    _visit(db, clinic, patient, revenue=4000000)
+
+    row = funnel.build(db, clinic["clinic"].id).channels[0]
+    assert row.channel == "facebook", "công thuộc về kênh tìm ra khách"
+
+
+def test_a_direct_return_visit_does_not_erase_the_campaign(db):
+    first = FakeResponse()
+    attribution.remember(FakeRequest(params={"utm_source": "tiktok"}), first)
+
+    second = FakeResponse()
+    stored = attribution.remember(
+        FakeRequest(path="/book/caredesk/bach-mai",
+                    cookies={attribution.COOKIE_NAME: first.cookies[attribution.COOKIE_NAME]}),
+        second)
+
+    assert stored["first"]["utm_source"] == "tiktok"
+    assert stored["latest"]["utm_source"] == "tiktok"
+    assert stored["latest"]["landing_path"] == "/book/caredesk/bach-mai"
+    assert stored["touches"] == 2
+
+
+def test_an_old_flat_cookie_still_works(db, clinic):
+    """Cookies written before latest-touch existed are already in browsers."""
+    import json
+    flat = json.dumps({"utm_source": "facebook", "utm_campaign": "cu",
+                       "first_seen_at": "2026-08-01T10:00:00"})
+
+    patient = PatientLead(clinic_id=clinic["clinic"].id, full_name="Cookie cu",
+                          consent_given=True)
+    attribution.apply_to_lead(patient, json.loads(flat))
+
+    assert patient.utm_source == "facebook"
+    assert patient.utm_campaign == "cu"
+
+
+# --- confirmation speed --------------------------------------------------------
+
+def test_confirmation_speed_separates_a_slow_desk_from_a_weak_channel(db, clinic):
+    """"Facebook is underperforming" and "we take four hours to ring back" look
+    identical in a conversion rate and need opposite fixes."""
+    now = datetime.datetime.now()
+    for minutes in (5, 15, 240):
+        patient = _lead(db, clinic, f"K{minutes}", utm_source="facebook")
+        appt = _visit(db, clinic, patient, status="confirmed")
+        appt.booking_requested_at = now - datetime.timedelta(minutes=minutes)
+        appt.booking_confirmed_at = now
+    db.commit()
+
+    speed = funnel.confirmation_speed(db, clinic["clinic"].id)
+    assert speed["requested"] == 3
+    assert speed["confirmed"] == 3
+    assert speed["median_minutes"] == 15, "trung vị, không phải trung bình"
+    assert speed["over_1h"] == 1
+
+
+def test_an_unconfirmed_request_lowers_the_confirm_rate(db, clinic):
+    now = datetime.datetime.now()
+    patient = _lead(db, clinic, "Chua goi lai", utm_source="facebook")
+    appt = _visit(db, clinic, patient, status="pending")
+    appt.booking_requested_at = now - datetime.timedelta(hours=3)
+    db.commit()
+
+    speed = funnel.confirmation_speed(db, clinic["clinic"].id)
+    assert speed["requested"] == 1 and speed["confirmed"] == 0
+    assert speed["confirm_rate_percent"] == 0.0
+
+
+def test_confirmation_speed_on_an_empty_period(db, clinic):
+    speed = funnel.confirmation_speed(db, clinic["clinic"].id)
+    assert speed["requested"] == 0 and speed["median_minutes"] is None

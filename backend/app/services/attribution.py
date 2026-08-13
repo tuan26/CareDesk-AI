@@ -11,11 +11,14 @@ does for them. A clinic asking "is Facebook worth it?" needs the first; a clinic
 asking "is the AI earning its subscription?" needs the second. Reporting one as
 the other makes both numbers untrustworthy.
 
-**First touch, not last touch.** Last touch is easier to record and is the wrong
-thing to report: the retargeting ad that catches someone on their way back takes
-credit for a patient the original campaign found, so the channel that actually
-works looks worse than the one that merely finished the job. The first visit
-wins and is never overwritten.
+**First touch owns the credit; latest touch is kept anyway.** Last touch is the
+wrong thing to report — the retargeting ad that catches someone on their way back
+would take credit for a patient the original campaign found, making the channel
+that actually works look worse than the one that merely finished the job. So
+acquisition is always first touch, written once and never moved. The latest touch
+is recorded separately because it answers a different, useful question: what
+brought this patient back on the day they finally booked. Two facts, two fields,
+no argument about which one a report means.
 """
 import json
 import logging
@@ -34,7 +37,12 @@ COOKIE_NAME = "caredesk_attr"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 90
 
 _FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content",
-           "referrer", "landing_path")
+           "utm_term", "click_id", "referrer", "landing_path")
+
+#: Mirrored onto the lead as latest_* — a deliberately smaller set. Latest touch
+#: exists to answer "what brought them back", not to reconstruct a second full
+#: acquisition record.
+_LATEST_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "landing_path")
 
 #: Recognisable hosts, so an organic click from a search result is not filed as
 #: "unknown" just because it carried no UTM parameters.
@@ -50,19 +58,20 @@ def from_request(request) -> Dict[str, Any]:
     params = request.query_params
     data = {f: None for f in _FIELDS}
 
-    for key in ("utm_source", "utm_medium", "utm_campaign", "utm_content"):
+    for key in ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"):
         value = params.get(key)
         if value:
             data[key] = value[:120]
 
     # Ad platforms send their own click ids and often no utm_source at all.
-    if not data["utm_source"]:
-        if params.get("fbclid"):
-            data["utm_source"], data["utm_medium"] = "facebook", "paid"
-        elif params.get("gclid"):
-            data["utm_source"], data["utm_medium"] = "google", "paid"
-        elif params.get("ttclid"):
-            data["utm_source"], data["utm_medium"] = "tiktok", "paid"
+    for param, platform in (("fbclid", "facebook"), ("gclid", "google"),
+                            ("ttclid", "tiktok")):
+        click = params.get(param)
+        if click:
+            data["click_id"] = click[:120]
+            if not data["utm_source"]:
+                data["utm_source"], data["utm_medium"] = platform, "paid"
+            break
 
     referrer = request.headers.get("referer") or ""
     if referrer:
@@ -92,49 +101,87 @@ def read_cookie(request) -> Dict[str, Any]:
         return {}
 
 
+def _normalise(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept the current {first, latest, touches} shape and the flat one that
+    cookies written before latest-touch existed still carry."""
+    if "first" in stored:
+        return stored
+    return {"first": stored, "latest": dict(stored), "touches": 1} if stored else {}
+
+
 def remember(request, response) -> Dict[str, Any]:
-    """Store first touch, and leave it alone on every later visit.
+    """Record this visit: first touch once, latest touch every time.
 
-    Returning the stored value rather than the current one is the point: a
-    visitor arriving today from a retargeting ad still carries the campaign that
-    found them the first time.
+    The two exist for different questions and must not be merged. First touch is
+    acquisition credit and is written once — a visitor arriving today from a
+    retargeting ad still belongs to the campaign that originally found them.
+    Latest touch is overwritten freely, and answers what brought them back on the
+    day they finally converted.
     """
-    existing = read_cookie(request)
-    if existing:
-        return existing
+    stored = _normalise(read_cookie(request))
+    current = from_request(request)
+    identifiable = any(current.get(f) for f in ("utm_source", "utm_campaign", "referrer"))
+    now = datetime.now().isoformat()
 
-    data = from_request(request)
-    if not any(data.get(f) for f in ("utm_source", "utm_campaign", "referrer")):
-        # Nothing worth remembering — a direct visit. Do not burn the cookie on
-        # it, or a later click from an advert would find the slot already taken.
-        return {}
+    if not stored:
+        if not identifiable:
+            # A plain visit must not claim the first-touch slot, or an advert
+            # clicked an hour later would find it already taken.
+            return {}
+        current["first_seen_at"] = now
+        stored = {"first": current, "latest": dict(current), "touches": 1}
+    else:
+        stored["touches"] = int(stored.get("touches") or 1) + 1
+        if identifiable:
+            stored["latest"] = current
+        else:
+            # Keep the previous campaign labels but move the timestamp: a direct
+            # return visit is still a visit, it just did not come from anywhere
+            # new.
+            stored.setdefault("latest", dict(stored["first"]))
+            stored["latest"]["landing_path"] = current.get("landing_path")
+    stored["latest_touch_at"] = now
 
-    data["first_seen_at"] = datetime.now().isoformat()
     response.set_cookie(
-        COOKIE_NAME, json.dumps(data, ensure_ascii=False),
+        COOKIE_NAME, json.dumps(stored, ensure_ascii=False),
         max_age=COOKIE_MAX_AGE, samesite="lax", httponly=False,
     )
-    return data
+    return stored
 
 
 def apply_to_lead(lead, data: Optional[Dict[str, Any]]) -> None:
-    """Stamp a new patient record with where they came from.
+    """Stamp a patient record with where they came from, and where they last
+    came back from.
 
-    Only ever fills blanks. A returning patient keeps the campaign that first
-    found them, because that is the campaign that earned the relationship.
+    First-touch fields are filled only when blank, which makes them effectively
+    immutable once a patient exists: the campaign that earned the relationship
+    keeps it, no matter how many adverts they click afterwards.
     """
-    if not data:
+    stored = _normalise(data or {})
+    if not stored:
         return
+
+    first = stored.get("first") or {}
     for field in _FIELDS:
-        if data.get(field) and not getattr(lead, field, None):
-            setattr(lead, field, str(data[field])[:300])
+        if first.get(field) and not getattr(lead, field, None):
+            setattr(lead, field, str(first[field])[:300])
 
     if not lead.first_seen_at:
-        raw = data.get("first_seen_at")
-        try:
-            lead.first_seen_at = datetime.fromisoformat(raw) if raw else datetime.now()
-        except (ValueError, TypeError):
-            lead.first_seen_at = datetime.now()
+        lead.first_seen_at = _parse(first.get("first_seen_at"))
+
+    latest = stored.get("latest") or first
+    for field in _LATEST_FIELDS:
+        if latest.get(field):
+            setattr(lead, f"latest_{field}", str(latest[field])[:300])
+    lead.latest_touch_at = _parse(stored.get("latest_touch_at"))
+    lead.touch_count = max(int(stored.get("touches") or 1), lead.touch_count or 1)
+
+
+def _parse(raw: Optional[str]) -> datetime:
+    try:
+        return datetime.fromisoformat(raw) if raw else datetime.now()
+    except (ValueError, TypeError):
+        return datetime.now()
 
 
 def channel_of(lead) -> str:

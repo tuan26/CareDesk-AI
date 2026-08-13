@@ -35,6 +35,18 @@ def handle_status_transition(db: Session, appt: Appointment, old_status: str):
 
     if old_status == appt.status:
         return
+
+    # Stamp the lifecycle as it happens. Status alone cannot answer "how long
+    # did confirmation take" once it has moved on, and that gap is the KPI that
+    # separates a weak ad channel from a slow callback desk.
+    now = datetime.now()
+    if appt.status == "confirmed" and not appt.booking_confirmed_at:
+        appt.booking_confirmed_at = now
+    elif appt.status == "cancelled" and not appt.cancelled_at:
+        appt.cancelled_at = now
+    elif appt.status == "completed" and not appt.completed_at:
+        appt.completed_at = now
+
     service = appt.service
     payload = {
         "appointment_id": appt.id,
@@ -279,7 +291,7 @@ def create_appointment(
         raise HTTPException(status_code=404, detail="Không tìm thấy chi nhánh")
 
     appt = Appointment(**appt_in.model_dump(), clinic_id=current_user.clinic_id or patient.clinic_id,
-                       booking_source="staff")
+                       booking_source="staff", booking_requested_at=datetime.now())
     db.add(appt)
     db.flush()
     emit_event(db, appt.clinic_id, "appointment_created", patient_id=patient.id,

@@ -76,6 +76,10 @@ def convert_booking_request(
     appointment = Appointment(
         **appointment_in.model_dump(), clinic_id=request.clinic_id,
         conversation_id=request.conversation_id, booking_source="ai_chat",
+        # The patient asked when they submitted the request, not when staff got
+        # round to converting it. Analytics counts the ask; using this timestamp
+        # keeps a marketing channel from being penalised for a slow callback.
+        booking_requested_at=request.created_at,
     )
     db.add(appointment)
     db.flush()
