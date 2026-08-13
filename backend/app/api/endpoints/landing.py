@@ -241,6 +241,9 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
             "svc": lambda s: service_content(s, locale),
+            # Editable copy, always complete: site_content.load fills every
+            # declared key from defaults, so a template never sees a blank.
+            "c": lambda key: brand.content.get(key),
             "error": err,
             "done": bool(done),
             "when": when,
@@ -361,6 +364,9 @@ def brand_landing(slug: str, request: Request, db: Session = Depends(get_db)):
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
             "svc": lambda s: service_content(s, locale),
+            # Editable copy, always complete: site_content.load fills every
+            # declared key from defaults, so a template never sees a blank.
+            "c": lambda key: brand.content.get(key),
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )
@@ -403,6 +409,9 @@ def branch_landing(brand_slug: str, branch_slug: str, request: Request,
             "locales": sorted(SUPPORTED_LOCALES) if multilang else [],
             "t": lambda key, **kw: landing_text(locale, key, **kw),
             "svc": lambda s: service_content(s, locale),
+            # Editable copy, always complete: site_content.load fills every
+            # declared key from defaults, so a template never sees a blank.
+            "c": lambda key: brand.content.get(key),
         },
         headers={"Cache-Control": _CACHE_HEADER},
     )

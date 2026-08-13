@@ -9,13 +9,15 @@
   and a half-filled state can be shared or reloaded.
 #}
 
-{% block hero_meta %}
-  <p class="sub">{{ brand.name }}</p>
-  <p class="sub">{{ t('not_confirmed') }}</p>
-{% endblock %}
-
-{% block hero_cta %}
-  <a class="btn ghost" href="{{ chat_href }}">💬 {{ t('or_chat') }}</a>
+{% block hero %}
+<div style="padding:34px 0 54px;max-width:640px">
+  <p class="eyebrow">{{ brand.name }}</p>
+  <h1>{{ t('form_title') }}</h1>
+  <p class="lead">{{ t('not_confirmed') }}</p>
+  <div class="cta-row">
+    <a class="btn ghost" href="{{ chat_href }}">{{ t('or_chat') }}</a>
+  </div>
+</div>
 {% endblock %}
 
 {% block content %}

@@ -85,6 +85,7 @@ export default function Layout() {
     { label: t('analytics'), items: [{ to: '/reports', icon: '📈', text: t('reports') }] },
     { label: t('system'), items: [
       { to: '/onboarding', icon: '🚀', text: 'Thiết lập' },
+      { to: '/website', icon: '🌐', text: 'Website' },
       { to: '/clinic', icon: '🏥', text: t('clinic') }, { to: '/services', icon: '🧴', text: t('services') }, { to: '/doctors', icon: '🩺', text: t('doctors') }, { to: '/settings', icon: '⚙️', text: t('settings') },
     ] },
   ];

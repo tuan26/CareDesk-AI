@@ -32,69 +32,225 @@
 <script type="application/ld+json">{{ json_ld | safe }}</script>
 
 <style>
-:root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#0d9488;--brand-dk:#0f766e;--bg:#f8fafc}
+/* Premium aesthetic clinic, not a spa promo banner: ivory ground, charcoal
+   text, deep olive as the single accent, gold used sparingly. Serif headings
+   over a neutral sans body carry the "medical credibility + editorial" feel
+   without leaning on photography — which matters, because most clinics will
+   launch before they have good photographs. */
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Manrope:wght@300;400;500;600;700&display=swap");
+:root{
+  --ivory:#F5F1EA; --ivory-2:#EFE9DF; --paper:#FFFDF9;
+  --ink:#20201D; --ink-soft:#4A4A44; --muted:#8A857B;
+  --olive:#3F493D; --olive-lt:#5C6858; --gold:#B99A5B;
+  --line:#E0D9CC;
+  --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif;
+  --sans:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
+body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--ivory);
+     line-height:1.65;-webkit-font-smoothing:antialiased}
 a{color:inherit}
-.wrap{max-width:900px;margin:0 auto;padding:0 20px}
-header.hero{background:linear-gradient(135deg,#0f172a,#115e59);color:#fff;padding:48px 0 40px}
-header.hero .wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
-.logo{width:84px;height:84px;border-radius:18px;object-fit:cover;background:#fff;flex:none}
-.logo-fb{width:84px;height:84px;border-radius:18px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:700;flex:none}
-h1{margin:0 0 6px;font-size:26px}
-.sub{color:rgba(255,255,255,.78);font-size:14px;margin:2px 0}
-.cta-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;width:100%}
-.langs{margin-left:auto;align-self:flex-start;display:flex;gap:4px}
-.lang{padding:5px 10px;border-radius:7px;font-size:12.5px;font-weight:600;text-decoration:none;color:rgba(255,255,255,.75);border:1px solid rgba(255,255,255,.28)}
-.lang.on{background:#fff;color:#0f172a;border-color:#fff}
-.btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px;text-decoration:none;background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff}
-.btn.ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28)}
-section{padding:34px 0;border-bottom:1px solid var(--line)}
+img{max-width:100%}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+/* Editorial typography: serif for anything carrying the brand voice. */
+h1,h2,h3,.serif{font-family:var(--serif);font-weight:500;letter-spacing:.01em}
+h1{margin:0 0 14px;font-size:clamp(34px,5.4vw,58px);line-height:1.12}
+h2{font-size:clamp(24px,3.2vw,36px);margin:0 0 8px;line-height:1.2}
+h3{font-size:20px;margin:0 0 6px}
+.eyebrow{font-family:var(--sans);font-size:11.5px;font-weight:600;letter-spacing:.18em;
+         text-transform:uppercase;color:var(--gold);margin:0 0 14px}
+.lead{font-size:17px;color:var(--ink-soft);max-width:56ch}
+.meta{color:var(--muted);font-size:14px;margin:2px 0}
+
+/* Hero: text left, image right — and it still reads with no image at all. */
+header.hero{background:var(--paper);border-bottom:1px solid var(--line);padding:26px 0 0}
+.nav{display:flex;align-items:center;gap:18px;padding-bottom:26px}
+.brandmark{display:flex;align-items:center;gap:12px;text-decoration:none}
+.logo{width:46px;height:46px;border-radius:50%;object-fit:cover;background:#fff;flex:none}
+.logo-fb{width:46px;height:46px;border-radius:50%;background:var(--olive);color:var(--ivory);
+         display:flex;align-items:center;justify-content:center;
+         font-family:var(--serif);font-size:22px;flex:none}
+.brandname{font-family:var(--serif);font-size:19px;line-height:1.15}
+.nav-links{display:flex;gap:22px;margin-left:auto;font-size:14px}
+.nav-links a{text-decoration:none;color:var(--ink-soft)}
+.nav-links a:hover{color:var(--olive)}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;
+           padding:44px 0 64px}
+.hero-figure{aspect-ratio:4/5;overflow:hidden;background:var(--ivory-2);
+             display:flex;align-items:center;justify-content:center}
+.hero-figure img{width:100%;height:100%;object-fit:cover}
+.hero-figure .placeholder{font-family:var(--serif);font-size:clamp(40px,7vw,84px);
+                          color:var(--line);letter-spacing:.06em}
+.stats{display:flex;gap:40px;margin-top:44px;padding-top:26px;
+       border-top:1px solid var(--line);flex-wrap:wrap}
+.stat-value{font-family:var(--serif);font-size:30px;line-height:1;color:var(--olive)}
+.stat-label{font-size:12.5px;color:var(--muted);margin-top:5px;letter-spacing:.03em}
+
+.langs{display:flex;gap:2px;margin-left:18px}
+.lang{padding:4px 8px;font-size:11.5px;font-weight:600;text-decoration:none;
+      color:var(--muted);letter-spacing:.06em}
+.lang.on{color:var(--olive);border-bottom:1px solid var(--gold)}
+
+/* One primary action, repeated. Olive is the only strong colour on the page. */
+.btn{display:inline-block;padding:15px 30px;font-size:14px;font-weight:600;
+     letter-spacing:.06em;text-transform:uppercase;text-decoration:none;
+     background:var(--olive);color:var(--ivory);border:1px solid var(--olive);
+     transition:background .2s,color .2s}
+.btn:hover{background:var(--ink);border-color:var(--ink)}
+.btn.ghost{background:transparent;color:var(--olive)}
+.btn.ghost:hover{background:var(--olive);color:var(--ivory)}
+.cta-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:30px}
+
+section{padding:76px 0;border-bottom:1px solid var(--line)}
 section:last-of-type{border-bottom:0}
-h2{font-size:19px;margin:0 0 16px}
-.grid{display:grid;gap:12px}
-.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px}
-.card h3{margin:0 0 4px;font-size:16px}
-.meta{color:var(--muted);font-size:13.5px;margin:2px 0}
-.price{font-weight:700;color:var(--brand-dk);white-space:nowrap}
-.row{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
-.mini{display:inline-block;padding:8px 14px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;background:var(--brand);color:#fff}
-.mini.alt{background:#fff;color:var(--brand-dk);border:1px solid var(--brand)}
-.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-footer{padding:26px 0 44px;color:var(--muted);font-size:12.5px;text-align:center}
-@media(max-width:560px){header.hero{padding:32px 0 28px}h1{font-size:22px}}
+section.tinted{background:var(--ivory-2)}
+section.dark{background:var(--olive);color:var(--ivory);border-bottom:0}
+section.dark h2,section.dark h3{color:var(--ivory)}
+section.dark .meta,section.dark .lead{color:rgba(245,241,234,.72)}
+.section-head{max-width:62ch;margin-bottom:40px}
+.center{text-align:center;margin-left:auto;margin-right:auto}
+
+.grid{display:grid;gap:24px}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.card{background:var(--paper);border:1px solid var(--line);padding:28px;
+      transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--olive-lt);transform:translateY(-2px)}
+.card h3{font-size:19px}
+.price{font-family:var(--serif);font-size:22px;color:var(--olive);white-space:nowrap}
+.row{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.actions{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap}
+.mini{display:inline-block;padding:10px 18px;font-size:12.5px;font-weight:600;
+      letter-spacing:.05em;text-transform:uppercase;text-decoration:none;
+      background:var(--olive);color:var(--ivory);border:1px solid var(--olive)}
+.mini.alt{background:transparent;color:var(--olive)}
+.mini.alt:hover{background:var(--olive);color:var(--ivory)}
+
+/* The one place the serif runs large and unaccompanied. */
+.quote{font-family:var(--serif);font-size:clamp(24px,3.4vw,40px);line-height:1.35;
+       max-width:22ch;margin:0 auto;text-align:center}
+
+/* Before/after side by side rather than a drag slider: a slider needs
+   JavaScript and hides half the evidence until the visitor works out how it
+   moves. Both halves visible is more persuasive and never breaks. */
+.case{background:var(--paper);border:1px solid var(--line)}
+.case-pair{display:grid;grid-template-columns:1fr 1fr}
+.case-half{position:relative;aspect-ratio:1;background:var(--ivory-2);overflow:hidden}
+.case-half img{width:100%;height:100%;object-fit:cover;display:block}
+.case-half span{position:absolute;left:10px;bottom:10px;background:rgba(32,32,29,.78);
+                color:var(--ivory);font-size:10.5px;font-weight:600;letter-spacing:.1em;
+                padding:4px 9px;text-transform:uppercase}
+.case-body{padding:18px 20px}
+
+.review{background:var(--paper);border:1px solid var(--line);padding:28px}
+.stars{color:var(--gold);letter-spacing:.16em;font-size:13px;margin-bottom:12px}
+.review-text{font-family:var(--serif);font-size:19px;line-height:1.5;color:var(--ink)}
+.review-name{font-size:13px;color:var(--muted);margin-top:16px;letter-spacing:.04em}
+
+.step-num{font-family:var(--serif);font-size:44px;color:var(--gold);line-height:1;margin-bottom:12px}
+
+.doctor-photo{aspect-ratio:3/4;background:var(--ivory-2);overflow:hidden;margin-bottom:16px}
+.doctor-photo .initials{width:100%;height:100%;display:flex;align-items:center;
+      justify-content:center;font-family:var(--serif);font-size:52px;color:var(--line)}
+
+footer{background:var(--ink);color:rgba(245,241,234,.66);padding:56px 0 40px;font-size:13.5px}
+footer a{color:rgba(245,241,234,.9)}
+.footer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:36px;margin-bottom:34px}
+.footer-title{font-family:var(--serif);font-size:20px;color:var(--ivory);margin-bottom:10px}
+.footer-bottom{border-top:1px solid rgba(245,241,234,.14);padding-top:22px;font-size:12px}
+
+/* A booking button always within thumb reach — the highest-leverage mobile
+   pattern for a clinic site. Desktop keeps the header CTA instead. */
+.sticky-cta{display:none}
+@media(max-width:860px){
+  .hero-grid{grid-template-columns:1fr;gap:32px;padding:28px 0 44px}
+  .hero-figure{aspect-ratio:16/11;order:-1}
+  .grid-4,.grid-3,.grid-2{grid-template-columns:1fr}
+  .footer-grid{grid-template-columns:1fr}
+  .nav-links{display:none}
+  section{padding:52px 0}
+  .stats{gap:26px}
+  body{padding-bottom:74px}
+  .sticky-cta{display:block;position:fixed;left:0;right:0;bottom:0;z-index:40;
+              background:var(--paper);border-top:1px solid var(--line);padding:11px 16px}
+  .sticky-cta .btn{display:block;text-align:center;padding:14px}
+}
 </style>
 </head>
 <body>
 
 <header class="hero">
   <div class="wrap">
-    {% if brand.logo_url %}
-      <img class="logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}">
-    {% else %}
-      <div class="logo-fb">{{ brand.name[:1] }}</div>
-    {% endif %}
-    <div style="flex:1;min-width:240px">
-      <h1>{{ heading }}</h1>
-      {% block hero_meta %}{% endblock %}
-    </div>
-    {# Empty when the multilang flag is off for this clinic — render nothing at
-       all rather than an empty nav that still takes up space in the hero. #}
-    {% if locales %}
-    <nav class="langs" aria-label="Language">
-      {% for lc in locales %}
-      <a href="{{ canonical_path }}?lang={{ lc }}"
-         class="lang{% if lc == locale %} on{% endif %}"
-         hreflang="{{ lc }}" rel="alternate">{{ lc | upper }}</a>
-      {% endfor %}
+    <nav class="nav">
+      <a class="brandmark" href="/book/{{ brand.slug }}">
+        {% if brand.logo_url %}
+          <img class="logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}">
+        {% else %}
+          <div class="logo-fb">{{ brand.name[:1] }}</div>
+        {% endif %}
+        <span class="brandname">{{ brand.name }}</span>
+      </a>
+
+      <div class="nav-links">
+        {% if brand.services %}<a href="#dich-vu">{{ t('services') }}</a>{% endif %}
+        {% if brand.doctors %}<a href="#bac-si">{{ t('doctors') }}</a>{% endif %}
+        {% if brand.cases %}<a href="#ket-qua">{{ t('showcase_nav') }}</a>{% endif %}
+        {% if brand.branches %}<a href="#co-so">{{ t('locations') }}</a>{% endif %}
+      </div>
+
+      {# Empty when the multilang flag is off for this clinic. #}
+      {% if locales %}
+      <div class="langs">
+        {% for lc in locales %}
+        <a href="{{ canonical_path }}?lang={{ lc }}"
+           class="lang{% if lc == locale %} on{% endif %}"
+           hreflang="{{ lc }}" rel="alternate">{{ lc | upper }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </nav>
-    {% endif %}
-    <div class="cta-row">{% block hero_cta %}{% endblock %}</div>
+
+    {% block hero %}{% endblock %}
   </div>
 </header>
 
-<main class="wrap">{% block content %}{% endblock %}</main>
+<main>{% block content %}{% endblock %}</main>
 
-<footer>{{ t('powered') }}</footer>
+<footer>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-title">{{ brand.name }}</div>
+        {% if brand.address %}<div>{{ brand.address }}</div>{% endif %}
+        {% if brand.phone %}<div style="margin-top:6px">
+          <a href="tel:{{ brand.phone }}">{{ brand.phone }}</a></div>{% endif %}
+      </div>
+      {% if brand.branches %}
+      <div>
+        <div style="font-weight:600;color:var(--ivory);margin-bottom:10px">{{ t('locations') }}</div>
+        {% for b in brand.branches %}
+        <div style="margin-bottom:6px">
+          <a href="/book/{{ brand.slug }}/{{ b.slug }}">{{ b.name }}</a>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div>
+        <div style="font-weight:600;color:var(--ivory);margin-bottom:10px">{{ t('book_title') }}</div>
+        <div style="margin-bottom:6px"><a href="/book/{{ brand.slug }}/dat-lich">{{ t('form_cta') }}</a></div>
+        <div><a href="{{ chat_href }}">{{ t('book_cta') }}</a></div>
+      </div>
+    </div>
+    <div class="footer-bottom">{{ t('powered') }}</div>
+  </div>
+</footer>
+
+{# Mobile only: the booking action never scrolls out of reach. #}
+<div class="sticky-cta">
+  <a class="btn" href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
+</div>
+
 </body>
 </html>

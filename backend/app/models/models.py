@@ -404,6 +404,10 @@ class VisitPhoto(Base):
     photographs of patients' faces and bodies, so the path must not be derivable
     from a patient id or a sequence. They are served only through an
     authenticated, clinic-scoped endpoint — never from a static mount.
+
+    Publishing one to the public site is a separate, explicit act: see the
+    consent columns below. A clinical record and a marketing asset are the same
+    file but not the same permission.
     """
     __tablename__ = "visit_photos"
 
@@ -421,7 +425,30 @@ class VisitPhoto(Base):
     uploaded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # --- Publishing to the public site ---------------------------------
+    # Three separate facts, deliberately not collapsed into one flag:
+    #
+    #   consent_given_at  the patient agreed. Withdrawable — clearing this must
+    #                     take the photo off the site immediately.
+    #   consent_by        which staff member recorded that agreement, so the
+    #                     clinic can answer "who says she agreed?" two years on.
+    #   is_published      the clinic chose to show this particular one.
+    #
+    # A photo appears publicly only when consent AND publication are both true.
+    # Defaults are off: a clinical record must never become marketing by accident.
+    consent_given_at = Column(DateTime(timezone=True), nullable=True)
+    consent_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    consent_note = Column(String, nullable=True)      # e.g. "ký giấy đồng ý 12/08"
+    is_published = Column(Boolean, nullable=False, default=False)
+    # Groups a before with its after into one public case.
+    showcase_group = Column(String, nullable=True, index=True)
+    public_title = Column(String, nullable=True)      # "Trị nám sau 3 buổi"
+
     visit = relationship("VisitRecord", back_populates="photos")
+
+    @property
+    def is_publicly_visible(self) -> bool:
+        return bool(self.is_published and self.consent_given_at)
 
 
 class BookingRequest(Base):
@@ -628,6 +655,34 @@ class WaitlistEntry(Base):
     service = relationship("Service")
 
 
+class SiteContent(Base):
+    """Editable copy for a clinic's public site, as key -> JSON value.
+
+    A table of keys rather than a column per field, because the landing page will
+    keep growing sections and each one would otherwise be a migration plus a
+    schema change plus a deploy. Keys are declared in services/site_content.py
+    with their defaults, so an unset key still renders sensible Vietnamese copy
+    instead of a blank page.
+
+    Only *copy* lives here. Services, doctors, photos and reviews stay in their
+    own tables — they are operational records that the site happens to display,
+    not website content someone has to maintain twice.
+    """
+    __tablename__ = "site_content"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "key", name="uq_site_content_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    key = Column(String, nullable=False, index=True)
+    value = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now())
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 class ReviewRequest(Base):
     """Post-visit rating ask. Low ratings are intercepted before they hit Google."""
     __tablename__ = "review_requests"
@@ -641,6 +696,13 @@ class ReviewRequest(Base):
     feedback = Column(Text, nullable=True)
     sent_at = Column(DateTime(timezone=True), server_default=func.now())
     answered_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Publishing a review is the clinic's decision, one at a time. Never
+    # automatic on a 5-star: the patient wrote it for the clinic, not for a
+    # website, and a real name on a public page is personal data.
+    is_published = Column(Boolean, nullable=False, default=False)
+    public_name = Column(String, nullable=True)   # "Chị Ngọc A." — never the full record name
+    published_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class AuditLog(Base):

@@ -1,83 +1,251 @@
 {% extends "base.html" %}
 
-{% block hero_meta %}
-  {% if brand.address %}<p class="sub">📍 {{ brand.address }}</p>{% endif %}
-  {% if brand.phone %}<p class="sub">☎ <a href="tel:{{ brand.phone }}">{{ brand.phone }}</a></p>{% endif %}
-  {% if brand.branches %}<p class="sub">{{ t('branch_count', n=brand.branches | length) }}</p>{% endif %}
-{% endblock %}
+{#
+  The clinic's public face. Every section renders only when it has real content,
+  so a clinic that has just finished onboarding gets a short, credible page
+  rather than a long one full of empty placeholders — and it grows on its own as
+  they treat patients, because the results and reviews come from operations
+  rather than from someone remembering to write a website.
+#}
 
-{% block hero_cta %}
-  <a class="btn" href="/book/{{ brand.slug }}/dat-lich">📅 {{ t('form_cta') }}</a>
-  <a class="btn ghost" href="{{ chat_href }}">💬 {{ t('book_cta') }}</a>
-  {% if brand.phone %}<a class="btn ghost" href="tel:{{ brand.phone }}">{{ t('call') }}</a>{% endif %}
+{% block hero %}
+<div class="hero-grid">
+  <div>
+    <p class="eyebrow">{{ c('philosophy_eyebrow') }}</p>
+    <h1>{{ c('hero_title') }}</h1>
+    <p class="lead">{{ c('hero_subtitle') }}</p>
+
+    <div class="cta-row">
+      <a class="btn" href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
+      <a class="btn ghost" href="{{ chat_href }}">{{ t('book_cta') }}</a>
+    </div>
+
+    {% if c('stats') %}
+    <div class="stats">
+      {% for s in c('stats') %}
+      <div>
+        <div class="stat-value">{{ s.value }}</div>
+        <div class="stat-label">{{ s.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="hero-figure">
+    {% if c('hero_image') %}
+      <img src="{{ c('hero_image') }}" alt="{{ brand.name }}">
+    {% elif brand.og_image_url %}
+      <img src="{{ brand.og_image_url }}" alt="{{ brand.name }}">
+    {% else %}
+      {# No stock photo stand-in: a monogram looks deliberate, a generic smiling
+         model looks like every other clinic. #}
+      <div class="placeholder">{{ brand.name[:1] }}</div>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
 
 {% block content %}
 
-{% if brand.branches %}
-<section>
-  <h2>{{ t('locations') }}</h2>
-  <div class="grid">
-    {% for b in brand.branches %}
-    <div class="card">
-      <h3>📍 {{ b.name }}</h3>
-      <p class="meta">{{ b.address }}</p>
-      {% if b.working_hours %}<p class="meta">🕐 {{ b.working_hours }}</p>{% endif %}
-      {% if b.phone %}<p class="meta">☎ <a href="tel:{{ b.phone }}">{{ b.phone }}</a></p>{% endif %}
-      <div class="actions">
-        {# Each card links to ITS OWN branch, and the chat pins that location. #}
-        <a class="mini" href="{{ chat_at(b.slug) }}">{{ t('book_here') }}</a>
-        {% if b.landing_enabled %}
-          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>
-          <a class="mini alt" target="_blank" rel="noopener"
-             href="{% if b.map_url %}{{ b.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ b.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
-        {% endif %}
-      </div>
-    </div>
-    {% endfor %}
+{% if c('philosophy') %}
+<section class="tinted">
+  <div class="wrap">
+    <p class="quote">&ldquo;{{ c('philosophy') }}&rdquo;</p>
   </div>
 </section>
 {% endif %}
 
 {% if brand.services %}
-<section>
-  <h2>{{ t('services') }}</h2>
-  <div class="grid">
-    {% for s in brand.services %}
-    {% set c = svc(s) %}
-    <div class="card">
-      <div class="row">
-        <div style="flex:1;min-width:220px">
-          <h3>{{ c.name or s.name }}</h3>
-          {% if c.description or s.description %}<p class="meta">{{ c.description or s.description }}</p>{% endif %}
-          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} {{ t('minutes') }}</p>{% endif %}
-        </div>
-        <div class="price">{{ "{:,.0f}".format(s.price) }}đ</div>
-      </div>
+<section id="dich-vu">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">{{ t('services') }}</p>
+      <h2>{{ c('services_title') }}</h2>
     </div>
-    {% endfor %}
+    <div class="grid grid-3">
+      {% for s in brand.services %}
+      {% set sc = svc(s) %}
+      <div class="card">
+        <div class="row">
+          <h3>{{ sc.name }}</h3>
+          <span class="price">{{ "{:,.0f}".format(s.price) }}đ</span>
+        </div>
+        {% if sc.description %}
+        <p class="meta">{{ sc.description[:150] }}{% if sc.description|length > 150 %}…{% endif %}</p>
+        {% endif %}
+        <p class="meta">{{ s.duration_minutes or 30 }} {{ t('minutes') }}</p>
+        <div class="actions">
+          <a class="mini" href="/book/{{ brand.slug }}/dat-lich?service={{ s.id }}">{{ c('hero_cta') }}</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endif %}
 
 {% if brand.doctors %}
-<section>
-  <h2>{{ t('doctors') }}</h2>
-  <div class="grid">
-    {% for d in brand.doctors %}
-    <div class="card">
-      <h3>{{ d.name }}</h3>
-      {% if d.specialty %}<p class="meta">{{ d.specialty }}</p>{% endif %}
+<section id="bac-si" class="tinted">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">{{ t('doctors') }}</p>
+      <h2>{{ c('doctors_title') }}</h2>
+      <p class="lead">{{ c('doctors_intro') }}</p>
     </div>
-    {% endfor %}
+    <div class="grid grid-3">
+      {% for d in brand.doctors %}
+      <div>
+        <div class="doctor-photo">
+          <div class="initials">{{ d.name[:1] }}</div>
+        </div>
+        <h3>{{ d.name }}</h3>
+        {% if d.specialty %}<p class="meta">{{ d.specialty }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endif %}
 
+{# Results. The single most persuasive thing on a page like this, and the whole
+   reason consent is tracked per photo — see models.VisitPhoto. #}
+{% if brand.cases %}
+<section id="ket-qua">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Real results</p>
+      <h2>{{ c('showcase_title') }}</h2>
+    </div>
+    <div class="grid grid-3">
+      {% for case in brand.cases %}
+      <div class="case">
+        <div class="case-pair">
+          <div class="case-half">
+            {% if case.before_url %}<img src="{{ case.before_url }}" alt="Trước">{% endif %}
+            <span>Trước</span>
+          </div>
+          <div class="case-half">
+            {% if case.after_url %}<img src="{{ case.after_url }}" alt="Sau">{% endif %}
+            <span>Sau</span>
+          </div>
+        </div>
+        <div class="case-body">
+          <h3 style="font-size:17px">{{ case.title }}</h3>
+          {% if case.service_name %}<p class="meta">{{ case.service_name }}</p>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="meta" style="margin-top:26px;max-width:60ch">{{ c('showcase_note') }}</p>
+  </div>
+</section>
+{% endif %}
+
+{% if brand.reviews %}
+<section class="tinted">
+  <div class="wrap">
+    <div class="section-head center" style="text-align:center">
+      <p class="eyebrow">Testimonials</p>
+      <h2>{{ t('reviews_title') }}</h2>
+    </div>
+    <div class="grid grid-3">
+      {% for r in brand.reviews %}
+      <div class="review">
+        <div class="stars">{{ "★" * r.rating }}{{ "☆" * (5 - r.rating) }}</div>
+        <p class="review-text">&ldquo;{{ r.text }}&rdquo;</p>
+        <p class="review-name">— {{ r.name }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if c('journey') %}
 <section>
-  <h2>{{ t('book_title') }}</h2>
-  <p class="meta">{{ t('book_body') }}</p>
-  <div class="actions"><a class="btn" href="{{ chat_href }}">💬 {{ t('book_start') }}</a></div>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Your journey</p>
+      <h2>{{ c('journey_title') }}</h2>
+    </div>
+    <div class="grid grid-3">
+      {% for step in c('journey') %}
+      <div>
+        <div class="step-num">{{ "%02d"|format(loop.index) }}</div>
+        <h3>{{ step.title }}</h3>
+        <p class="meta">{{ step.body }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if c('space_image') or c('space_body') %}
+<section class="tinted">
+  <div class="wrap">
+    <div class="grid grid-2" style="align-items:center;gap:48px">
+      <div class="hero-figure" style="aspect-ratio:4/3;margin:0">
+        {% if c('space_image') %}
+          <img src="{{ c('space_image') }}" alt="{{ brand.name }}">
+        {% else %}
+          <div class="placeholder">◇</div>
+        {% endif %}
+      </div>
+      <div>
+        <p class="eyebrow">The space</p>
+        <h2>{{ c('space_title') }}</h2>
+        <p class="lead">{{ c('space_body') }}</p>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if brand.branches %}
+<section id="co-so">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">{{ t('locations') }}</p>
+      <h2>{{ t('locations') }}</h2>
+    </div>
+    <div class="grid grid-2">
+      {% for b in brand.branches %}
+      <div class="card">
+        <h3>{{ b.name }}</h3>
+        <p class="meta">{{ b.address }}</p>
+        {% if b.working_hours %}<p class="meta">{{ t('hours') }}: {{ b.working_hours }}</p>{% endif %}
+        {% if b.phone %}<p class="meta"><a href="tel:{{ b.phone }}">{{ b.phone }}</a></p>{% endif %}
+        <div class="actions">
+          <a class="mini" href="/book/{{ brand.slug }}/dat-lich?branch={{ b.slug }}">{{ t('book_here') }}</a>
+          {% if b.landing_enabled %}
+          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>
+          {% endif %}
+          <a class="mini alt" target="_blank" rel="noopener"
+             href="{% if b.map_url %}{{ b.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ b.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="dark">
+  <div class="wrap center" style="text-align:center;max-width:660px">
+    <p class="eyebrow">Ready to begin</p>
+    <h2>{{ c('closing_title') }}</h2>
+    <p class="lead center" style="margin:14px auto 0">{{ c('closing_body') }}</p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn" style="background:var(--ivory);color:var(--olive);border-color:var(--ivory)"
+         href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
+      {% if brand.phone %}
+      <a class="btn ghost" style="color:var(--ivory);border-color:rgba(245,241,234,.5)"
+         href="tel:{{ brand.phone }}">{{ t('call') }}</a>
+      {% endif %}
+    </div>
+  </div>
 </section>
 
 {% endblock %}

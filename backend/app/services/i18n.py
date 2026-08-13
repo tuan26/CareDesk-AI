@@ -141,6 +141,7 @@ LANDING_TEXT = {
         "done_body": "Yêu cầu đặt lịch lúc {when} đã được gửi tới phòng khám. Lễ tân sẽ liên hệ để xác nhận.",
         "book_another": "Đặt thêm lịch khác", "change": "Đổi",
         "today": "Hôm nay", "tomorrow": "Ngày mai",
+        "showcase_nav": "Kết quả", "reviews_title": "Khách hàng nói gì",
         "not_found_body": "Phòng khám hoặc cơ sở này không tồn tại, đã đổi liên kết hoặc đang tạm ngưng.",
     },
     "en": {
@@ -174,6 +175,7 @@ LANDING_TEXT = {
         "done_body": "Your request for {when} has been sent. Reception will contact you to confirm.",
         "book_another": "Book another", "change": "Change",
         "today": "Today", "tomorrow": "Tomorrow",
+        "showcase_nav": "Results", "reviews_title": "What our clients say",
         "not_found_body": "This clinic or location does not exist, has moved, or is temporarily unavailable.",
     },
     "ja": {
@@ -207,6 +209,7 @@ LANDING_TEXT = {
         "done_body": "{when}のリクエストを送信しました。受付よりご連絡いたします。",
         "book_another": "別の予約をする", "change": "変更",
         "today": "本日", "tomorrow": "明日",
+        "showcase_nav": "施術例", "reviews_title": "お客様の声",
         "not_found_body": "このクリニックまたは店舗は存在しないか、リンクが変更されたか、一時的に利用できません。",
     },
 }

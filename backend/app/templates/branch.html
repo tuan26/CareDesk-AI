@@ -1,78 +1,140 @@
 {% extends "base.html" %}
 
-{% block hero_meta %}
-  <p class="sub">{{ brand.name }}</p>
-  <p class="sub">📍 {{ branch.address }}</p>
-  {% if branch.working_hours %}<p class="sub">🕐 {{ branch.working_hours }}</p>{% endif %}
-  {% if branch.phone %}<p class="sub">☎ <a href="tel:{{ branch.phone }}">{{ branch.phone }}</a></p>{% endif %}
-{% endblock %}
+{# One location. Same voice as the brand page, but everything on it is about
+   getting to this address and booking at this address. #}
 
-{% block hero_cta %}
-  <a class="btn" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">📅 {{ t('form_cta') }}</a>
-  <a class="btn ghost" href="{{ chat_href }}">💬 {{ t('book_at_branch') }}</a>
-  {% if branch.phone %}<a class="btn ghost" href="tel:{{ branch.phone }}">{{ t('call_branch') }}</a>{% endif %}
+{% block hero %}
+<div class="hero-grid">
+  <div>
+    <p class="eyebrow">{{ brand.name }}</p>
+    <h1>{{ branch.name }}</h1>
+    <p class="lead">{{ branch.address }}</p>
+    {% if branch.working_hours %}
+    <p class="meta">{{ t('hours') }}: {{ branch.working_hours }}</p>
+    {% endif %}
+
+    <div class="cta-row">
+      <a class="btn" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">{{ c('hero_cta') }}</a>
+      <a class="btn ghost" target="_blank" rel="noopener"
+         href="{% if branch.map_url %}{{ branch.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ branch.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
+    </div>
+
+    {% if branch.phone or brand.phone %}
+    <p class="meta" style="margin-top:22px">
+      <a href="tel:{{ branch.phone or brand.phone }}">{{ branch.phone or brand.phone }}</a>
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="hero-figure">
+    {% if c('space_image') %}
+      <img src="{{ c('space_image') }}" alt="{{ branch.name }}">
+    {% elif brand.og_image_url %}
+      <img src="{{ brand.og_image_url }}" alt="{{ branch.name }}">
+    {% else %}
+      <div class="placeholder">{{ brand.name[:1] }}</div>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
 
 {% block content %}
 
-<section>
-  <h2>{{ t('branch_info') }}</h2>
-  <div class="card">
-    <h3>📍 {{ branch.name }}</h3>
-    <p class="meta">{{ branch.address }}</p>
-    {% if branch.working_hours %}<p class="meta">🕐 {{ t('hours') }}: {{ branch.working_hours }}</p>{% endif %}
-    {% if branch.phone %}<p class="meta">☎ <a href="tel:{{ branch.phone }}">{{ branch.phone }}</a></p>{% endif %}
-    <div class="actions">
-      <a class="mini" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">{{ t('book_here') }}</a>
-      {# The clinic's own pasted map link is exact; searching the address text is
-         the fallback and can land on the wrong side of the street. #}
-      <a class="mini alt" target="_blank" rel="noopener"
-         href="{% if branch.map_url %}{{ branch.map_url }}{% else %}https://www.google.com/maps/search/?api=1&amp;query={{ branch.address | urlencode }}{% endif %}">{{ t('directions') }}</a>
-    </div>
-  </div>
-</section>
-
 {% if brand.services %}
 <section>
-  <h2>{{ t('services') }}</h2>
-  <div class="grid">
-    {% for s in brand.services %}
-    {% set c = svc(s) %}
-    <div class="card">
-      <div class="row">
-        <div style="flex:1;min-width:220px">
-          <h3>{{ c.name or s.name }}</h3>
-          {% if c.description or s.description %}<p class="meta">{{ c.description or s.description }}</p>{% endif %}
-          {% if s.duration_minutes %}<p class="meta">⏱ {{ s.duration_minutes }} {{ t('minutes') }}</p>{% endif %}
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">{{ t('services') }}</p>
+      <h2>{{ c('services_title') }}</h2>
+    </div>
+    <div class="grid grid-3">
+      {% for s in brand.services %}
+      {% set sc = svc(s) %}
+      <div class="card">
+        <div class="row">
+          <h3>{{ sc.name }}</h3>
+          <span class="price">{{ "{:,.0f}".format(s.price) }}đ</span>
         </div>
-        <div class="price">{{ "{:,.0f}".format(s.price) }}đ</div>
+        <p class="meta">{{ s.duration_minutes or 30 }} {{ t('minutes') }}</p>
+        <div class="actions">
+          <a class="mini" href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}&amp;service={{ s.id }}">{{ t('book_here') }}</a>
+        </div>
       </div>
+      {% endfor %}
     </div>
-    {% endfor %}
   </div>
 </section>
 {% endif %}
 
-{% if brand.branches | length > 1 %}
-<section>
-  <h2>{{ t('other_branches') }}</h2>
-  <div class="grid">
-    {% for b in brand.branches if b.id != branch.id %}
-    <div class="card">
-      <h3>📍 {{ b.name }}</h3>
-      <p class="meta">{{ b.address }}</p>
-      <div class="actions">
-        <a class="mini" href="{{ chat_at(b.slug) }}">{{ t('book_here') }}</a>
-        {% if b.landing_enabled %}<a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>{% endif %}
-      </div>
+{% if brand.cases %}
+<section class="tinted">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Real results</p>
+      <h2>{{ c('showcase_title') }}</h2>
     </div>
-    {% endfor %}
+    <div class="grid grid-3">
+      {% for case in brand.cases %}
+      <div class="case">
+        <div class="case-pair">
+          <div class="case-half">
+            {% if case.before_url %}<img src="{{ case.before_url }}" alt="Trước">{% endif %}
+            <span>Trước</span>
+          </div>
+          <div class="case-half">
+            {% if case.after_url %}<img src="{{ case.after_url }}" alt="Sau">{% endif %}
+            <span>Sau</span>
+          </div>
+        </div>
+        <div class="case-body">
+          <h3 style="font-size:17px">{{ case.title }}</h3>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="meta" style="margin-top:26px;max-width:60ch">{{ c('showcase_note') }}</p>
   </div>
 </section>
 {% endif %}
 
+{% set others = brand.branches | rejectattr('id', 'equalto', branch.id) | list %}
+{% if others %}
 <section>
-  <a class="mini alt" href="/book/{{ brand.slug }}?lang={{ locale }}">← {{ t('back_to', name=brand.name) }}</a>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">{{ t('other_branches') }}</p>
+      <h2>{{ t('locations') }}</h2>
+    </div>
+    <div class="grid grid-2">
+      {% for b in others %}
+      <div class="card">
+        <h3>{{ b.name }}</h3>
+        <p class="meta">{{ b.address }}</p>
+        <div class="actions">
+          <a class="mini" href="/book/{{ brand.slug }}/dat-lich?branch={{ b.slug }}">{{ t('book_here') }}</a>
+          {% if b.landing_enabled %}
+          <a class="mini alt" href="/book/{{ brand.slug }}/{{ b.slug }}?lang={{ locale }}">{{ t('details') }}</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="dark">
+  <div class="wrap center" style="text-align:center;max-width:660px">
+    <p class="eyebrow">Ready to begin</p>
+    <h2>{{ c('closing_title') }}</h2>
+    <p class="lead center" style="margin:14px auto 0">{{ c('closing_body') }}</p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn" style="background:var(--ivory);color:var(--olive);border-color:var(--ivory)"
+         href="/book/{{ brand.slug }}/dat-lich?branch={{ branch.slug }}">{{ c('hero_cta') }}</a>
+      <a class="btn ghost" style="color:var(--ivory);border-color:rgba(245,241,234,.5)"
+         href="/book/{{ brand.slug }}?lang={{ locale }}">{{ t('back_to', name=brand.name) }}</a>
+    </div>
+  </div>
 </section>
 
 {% endblock %}

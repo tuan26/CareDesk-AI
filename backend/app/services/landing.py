@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
 from backend.app.core.slug import current_slug, resolve
+from backend.app.services import site_content
 from backend.app.models.models import (
     Branch, Clinic, Doctor, Organization, Service, SlugRegistry,
 )
@@ -66,6 +67,28 @@ class BranchView:
 
 
 @dataclass
+class ShowcaseCase:
+    """One before/after pair, ready for the public page.
+
+    Assembled from photos that already exist as clinical records — the clinic
+    chooses which ones may be shown, it does not produce them for the website.
+    Only photos with recorded consent AND publication ever reach here.
+    """
+    title: str
+    before_url: Optional[str]
+    after_url: Optional[str]
+    service_name: Optional[str] = None
+
+
+@dataclass
+class PublicReview:
+    """A review the clinic chose to show, under a name staff entered by hand."""
+    rating: int
+    text: str
+    name: str
+
+
+@dataclass
 class BrandView:
     """Everything a brand landing page renders. Assembled from existing data —
     Phase 1 adds no content columns."""
@@ -81,6 +104,11 @@ class BrandView:
     services: list[Service] = field(default_factory=list)
     doctors: list[Doctor] = field(default_factory=list)
     is_chain: bool = False
+    # Editable copy, plus the two things that actually convert an aesthetics
+    # visitor: results they can see, and words from people who went first.
+    content: dict = field(default_factory=dict)
+    cases: list["ShowcaseCase"] = field(default_factory=list)
+    reviews: list["PublicReview"] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- resolution
@@ -146,6 +174,73 @@ def _live_row(db: Session, slug: str) -> SlugRegistry:
     return row
 
 
+def _load_cases(db: Session, clinic_ids: list[int], limit: int = 6) -> list["ShowcaseCase"]:
+    """Published before/after pairs.
+
+    Both conditions are required, every time: the patient consented AND the
+    clinic published. The query is the enforcement point — nothing downstream
+    re-checks, so this filter is the only thing between a clinical photograph
+    and the open internet.
+    """
+    from backend.app.models.models import Appointment, VisitPhoto, VisitRecord
+
+    photos = (
+        db.query(VisitPhoto)
+        .filter(VisitPhoto.clinic_id.in_(clinic_ids),
+                VisitPhoto.is_published == True,           # noqa: E712
+                VisitPhoto.consent_given_at != None)       # noqa: E711
+        .order_by(VisitPhoto.id.desc())
+        .limit(limit * 4)
+        .all()
+    )
+
+    grouped: dict = {}
+    for photo in photos:
+        # Photos of one treatment are paired by group; anything ungrouped falls
+        # back to its own visit, so a lone "after" still shows rather than
+        # vanishing because nobody filled in a group name.
+        key = photo.showcase_group or f"visit-{photo.visit_record_id}"
+        grouped.setdefault(key, []).append(photo)
+
+    cases = []
+    for key, items in grouped.items():
+        before = next((p for p in items if p.kind == "before"), None)
+        after = next((p for p in items if p.kind == "after"), None)
+        if not before and not after:
+            continue
+        lead = after or before
+        record = lead.visit
+        appt = record.appointment if record else None
+        cases.append(ShowcaseCase(
+            title=(lead.public_title
+                   or (appt.service.name if appt and appt.service else "Kết quả điều trị")),
+            before_url=f"/api/v1/visits/photos/{before.id}" if before else None,
+            after_url=f"/api/v1/visits/photos/{after.id}" if after else None,
+            service_name=appt.service.name if appt and appt.service else None,
+        ))
+        if len(cases) >= limit:
+            break
+    return cases
+
+
+def _load_reviews(db: Session, clinic_ids: list[int], limit: int = 6) -> list["PublicReview"]:
+    from backend.app.models.models import ReviewRequest
+
+    rows = (
+        db.query(ReviewRequest)
+        .filter(ReviewRequest.clinic_id.in_(clinic_ids),
+                ReviewRequest.is_published == True)        # noqa: E712
+        .order_by(ReviewRequest.published_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        PublicReview(rating=r.rating or 5, text=r.feedback or "",
+                     name=r.public_name or "Khách hàng")
+        for r in rows if r.feedback
+    ]
+
+
 def _build_brand(db: Session, *, org: Organization | None, clinics: list[Clinic],
                  slug: str, name: str) -> BrandView:
     clinic_ids = [c.id for c in clinics]
@@ -197,6 +292,9 @@ def _build_brand(db: Session, *, org: Organization | None, clinics: list[Clinic]
         services=services,
         doctors=doctors,
         is_chain=bool(org and len(clinics) > 1),
+        content=site_content.load(db, clinic_ids[0]),
+        cases=_load_cases(db, clinic_ids),
+        reviews=_load_reviews(db, clinic_ids),
     )
 
 
