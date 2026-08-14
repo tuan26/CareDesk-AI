@@ -114,6 +114,8 @@
    it stands down and the panel takes the whole corner. */
 @media(max-width:860px){
   #cd-chat{right:12px;left:12px;bottom:84px}
+  /* No sticky booking bar to clear on the booking page itself. */
+  body.no-sticky #cd-chat{bottom:12px}
   #cd-launcher{width:100%;justify-content:center}
   #cd-panel{width:auto;height:min(72vh,560px)}
   body.cd-open .sticky-cta{display:none}

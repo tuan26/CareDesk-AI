@@ -210,6 +210,31 @@ def open_slots(db: Session, clinic_id: Optional[int], target_date: date,
     return out
 
 
+def days_with_availability(db: Session, clinic_id: Optional[int], start: date,
+                           count: int, duration: int,
+                           branch_id: Optional[int] = None,
+                           doctor_id: Optional[int] = None) -> list:
+    """(date, free slot count) for the next `count` days.
+
+    So the day picker can say which days are worth choosing instead of listing
+    fourteen identical buttons and letting the patient find the closed ones by
+    trial and error. A picker that cannot tell Sunday from a fully booked
+    Tuesday is a list, not a choice.
+
+    Deliberately built by calling open_slots per day rather than by a faster
+    bulk query: the picker and the slot list must never disagree. A grid that
+    promises a free Thursday and a step 4 that shows nothing is worse than no
+    grid at all — and any second implementation of "is this slot free" would
+    drift from the first within a release or two.
+    """
+    return [
+        (start + timedelta(days=offset),
+         len(open_slots(db, clinic_id, start + timedelta(days=offset), duration,
+                        branch_id=branch_id, doctor_id=doctor_id)))
+        for offset in range(count)
+    ]
+
+
 def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: date,
                            duration: int, branch_id: Optional[int] = None):
     """Find an active doctor with free slots on the date. Returns (doctor, branch, slots).

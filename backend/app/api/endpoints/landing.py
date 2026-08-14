@@ -29,7 +29,8 @@ from backend.app.services.landing import (
 from backend.app.services import attribution
 from backend.app.services.features import MULTILANG, is_enabled
 from backend.app.services.i18n import (
-    SUPPORTED_LOCALES, UI_TEXT, landing_text, normalize_locale, service_content, ui_text,
+    SUPPORTED_LOCALES, UI_TEXT, landing_text, normalize_locale, service_content,
+    ui_text, weekday_names,
 )
 from backend.app.services.rate_limit import landing_rate_limiter
 
@@ -193,11 +194,16 @@ def _branch_json_ld(brand: BrandView, branch: BranchView, path: str) -> str:
 
 _MAX_DAYS_AHEAD = 30
 
+#: How many days the picker shows. Two weeks fits on one phone screen as a grid
+#: and covers the window almost every aesthetics booking falls in; the accepted
+#: range stays at _MAX_DAYS_AHEAD so a shared link further out still works.
+_CALENDAR_DAYS = 14
+
 
 def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id,
                      locale: str, multilang: bool) -> dict:
     """Resolve however far through the form the patient has got."""
-    from backend.app.services.booking_flow import open_slots
+    from backend.app.services.booking_flow import days_with_availability, open_slots
 
     branches = [b for b in brand.branches] or []
     branch = next((b for b in branches if b.slug == branch_slug), None)
@@ -218,11 +224,25 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
         except ValueError:
             chosen_day = None
 
+    clinic_id = (getattr(branch, "clinic_id", None)
+                 or (brand.clinic_ids[0] if brand.clinic_ids else None))
+    duration = (service.duration_minutes or 30) if service else 30
+
+    # Only once the patient has narrowed to a location and a treatment: before
+    # that the answer would be wrong (different branches, different durations)
+    # and the work wasted on every visitor who never reaches step 3.
+    calendar = []
+    if branch and service:
+        calendar = days_with_availability(
+            db, clinic_id, today, _CALENDAR_DAYS, duration,
+            branch_id=branch.id, doctor_id=int(doctor_id) if doctor_id else None,
+        )
+
     slots = []
     if branch and service and chosen_day:
         slots = open_slots(
-            db, clinic_id=getattr(branch, "clinic_id", None) or (brand.clinic_ids[0] if brand.clinic_ids else None),
-            target_date=chosen_day, duration=service.duration_minutes or 30,
+            db, clinic_id=clinic_id,
+            target_date=chosen_day, duration=duration,
             branch_id=branch.id,
             doctor_id=int(doctor_id) if doctor_id else None,
         )
@@ -230,10 +250,47 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
     return {
         "branches": branches, "branch": branch,
         "service": service, "days": days, "chosen_day": chosen_day,
-        "slots": slots,
+        "calendar": _calendar_weeks(calendar), "slots": _slots_by_part(slots),
+        "slot_count": len(slots),
         "doctors": brand.doctors,
         "doctor_id": doctor_id,
     }
+
+
+def _calendar_weeks(calendar: list) -> list:
+    """(date, free) pairs laid out as Monday-first weeks.
+
+    Padded with None at the front so the first date lands in its real weekday
+    column. A calendar whose columns do not line up with the day names is worse
+    than a list — it looks authoritative and is wrong.
+    """
+    if not calendar:
+        return []
+    weeks, row = [], [None] * calendar[0][0].weekday()
+    for entry in calendar:
+        row.append(entry)
+        if len(row) == 7:
+            weeks.append(row)
+            row = []
+    if row:
+        weeks.append(row + [None] * (7 - len(row)))
+    return weeks
+
+
+def _slots_by_part(slots: list) -> list:
+    """Times grouped into morning / afternoon / evening.
+
+    Patients do not choose "14:30", they choose "chiều" and then a time within
+    it. Twenty undifferentiated chips make them read every one.
+    """
+    parts = [("morning", []), ("afternoon", []), ("evening", [])]
+    for slot, doctor in slots:
+        # 18:00, not 17:00. In Vietnamese five in the afternoon is chiều; filing
+        # it under "buổi tối" makes the clinic look like it keeps hours it does
+        # not, and a patient scanning for an after-work slot skips the group.
+        index = 0 if slot.hour < 12 else 1 if slot.hour < 18 else 2
+        parts[index][1].append((slot, doctor))
+    return [(name, items) for name, items in parts if items]
 
 
 @router.get("/{slug}/dat-lich", response_class=HTMLResponse,
@@ -277,6 +334,8 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
             # Editable copy, always complete: site_content.load fills every
             # declared key from defaults, so a template never sees a blank.
             "c": lambda key: brand.content.get(key),
+            "weekdays": weekday_names(locale),
+            "today": date.today(),
             "error": err,
             "done": bool(done),
             "when": when,

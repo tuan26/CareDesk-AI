@@ -5,13 +5,29 @@
   JavaScript — because the patients this exists for are the ones least likely to
   have a fast phone or the patience for a chat window.
 
+  Four things make a step-by-step form on a phone work, and the first version
+  had none of them:
+
+    1. Every option carries a visible "Chọn". A card that is secretly a link
+       reads as a description, and the patient waits for a button that is not
+       coming.
+    2. Every option link ends in #buoc-N, so the reload lands on the next
+       question instead of at the top of the page. Otherwise choosing a service
+       looks like nothing happened and the calendar sits below the fold.
+    3. The day picker is a calendar, not fourteen identical chips, and it says
+       which days are closed or full. Otherwise picking a day is guesswork that
+       is only corrected one click later.
+    4. A step counter, so the patient knows there is an end to this.
+
   The form narrows through query parameters, so the browser back button works
   and a half-filled state can be shared or reloaded.
 #}
 
+{% set multi_branch = branches|length > 1 %}
+{% set total_steps = 5 if multi_branch else 4 %}
+{% macro step_no(n) %}{{ n if multi_branch else n - 1 }}{% endmacro %}
+
 {% block hero %}
-{# 712px is the content box of .wrap.narrow (760 less its 24px gutters), so the
-   heading starts on exactly the same line as the steps below it. #}
 <div style="padding:34px 0 54px;max-width:712px;margin:0 auto">
   <p class="eyebrow">{{ brand.name }}</p>
   <h1>{{ t('form_title') }}</h1>
@@ -42,28 +58,31 @@
 
 {% if error %}
 <div class="wrap narrow">
-  <div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;margin-top:18px">
+  <div class="card" style="border-color:#E4B9B8;background:#FBF1F0;color:#9F3A38;margin-top:18px">
     ⚠️ {{ error }}
   </div>
 </div>
 {% endif %}
 
 {# Step 1 — location. Skipped entirely when the clinic has one. #}
-{% if branches|length > 1 %}
-<section class="step">
+{% if multi_branch %}
+<section class="step" id="buoc-1">
   <div class="wrap narrow">
-    <h2>{{ t('step_branch') }}</h2>
     {% if branch %}
-      <div class="row card">
+      <p class="step-label done">{{ t('step_of', n=1, total=total_steps) }} · {{ t('picked') }}</p>
+      <div class="row card chosen">
         <div><strong>{{ branch.name }}</strong><div class="meta">{{ branch.address }}</div></div>
         <a class="mini alt" href="{{ canonical_path }}">{{ t('change') }}</a>
       </div>
     {% else %}
+      <p class="step-label">{{ t('step_of', n=1, total=total_steps) }}</p>
+      <h2>{{ t('step_branch') }}</h2>
+      <p class="meta" style="margin-bottom:20px">{{ t('hint_branch') }}</p>
       <div class="grid">
         {% for b in branches %}
-        <a class="card row" style="text-decoration:none" href="{{ canonical_path }}?branch={{ b.slug }}">
+        <a class="card pick" href="{{ canonical_path }}?branch={{ b.slug }}#buoc-2">
           <div><strong>{{ b.name }}</strong><div class="meta">{{ b.address }}</div></div>
-          <span class="mini">{{ t('details') }}</span>
+          <span class="mini">{{ t('pick') }}</span>
         </a>
         {% endfor %}
       </div>
@@ -74,32 +93,36 @@
 
 {# Step 2 — service #}
 {% if branch %}
-<section class="step">
+<section class="step" id="buoc-2">
   <div class="wrap narrow">
-    <h2>{{ t('step_service') }}</h2>
     {% if service %}
       {% set c = svc(service) %}
-      <div class="row card">
+      <p class="step-label done">{{ t('step_of', n=step_no(2), total=total_steps) }} · {{ t('picked') }}</p>
+      <div class="row card chosen">
         <div>
           <strong>{{ c.name }}</strong>
           <div class="meta">{{ service.duration_minutes or 30 }} {{ t('minutes') }}</div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center">
+        <div style="display:flex;gap:12px;align-items:center">
           <span class="price">{{ "{:,.0f}".format(service.price) }}đ</span>
-          <a class="mini alt" href="{{ canonical_path }}?branch={{ branch.slug }}">{{ t('change') }}</a>
+          <a class="mini alt" href="{{ canonical_path }}?branch={{ branch.slug }}#buoc-2">{{ t('change') }}</a>
         </div>
       </div>
     {% else %}
+      <p class="step-label">{{ t('step_of', n=step_no(2), total=total_steps) }}</p>
+      <h2>{{ t('step_service') }}</h2>
+      <p class="meta" style="margin-bottom:20px">{{ t('hint_service') }}</p>
       <div class="grid">
         {% for s in brand.services %}
         {% set c = svc(s) %}
-        <a class="card row" style="text-decoration:none"
-           href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ s.id }}">
+        <a class="card pick"
+           href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ s.id }}#buoc-3">
           <div>
             <strong>{{ c.name }}</strong>
             <div class="meta">{{ s.duration_minutes or 30 }} {{ t('minutes') }}</div>
           </div>
           <span class="price">{{ "{:,.0f}".format(s.price) }}đ</span>
+          <span class="mini">{{ t('pick') }}</span>
         </a>
         {% endfor %}
       </div>
@@ -108,19 +131,42 @@
 </section>
 {% endif %}
 
-{# Step 3 — date. Two weeks of buttons: a date picker on a small phone is worse. #}
+{# Step 3 — day. A calendar rather than a date input: a native picker on a small
+   phone hides the one thing that matters, which days can actually be booked. #}
 {% if branch and service %}
-<section class="step">
+<section class="step" id="buoc-3">
   <div class="wrap narrow">
+    <p class="step-label{% if chosen_day %} done{% endif %}">
+      {{ t('step_of', n=step_no(3), total=total_steps) }}{% if chosen_day %} · {{ t('picked') }}{% endif %}
+    </p>
     <h2>{{ t('step_day') }}</h2>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      {% for d in days[:14] %}
-      <a class="mini {% if chosen_day != d %}alt{% endif %}"
-         href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}&day={{ d.isoformat() }}">
-        {% if loop.index0 == 0 %}{{ t('today') }}
-        {% elif loop.index0 == 1 %}{{ t('tomorrow') }}
-        {% else %}{{ d.strftime('%d/%m') }}{% endif %}
-      </a>
+    <p class="meta" style="margin-bottom:18px">{{ t('hint_day') }}</p>
+
+    <div class="cal">
+      <div class="cal-head">
+        {% for name in weekdays %}<span>{{ name }}</span>{% endfor %}
+      </div>
+      {% for week in calendar %}
+      <div class="cal-week">
+        {% for cell in week %}
+          {% if not cell %}
+            <span class="cal-day empty"></span>
+          {% else %}
+            {% set d, free = cell %}
+            {% if free %}
+            <a class="cal-day{% if chosen_day == d %} on{% endif %}"
+               href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}&day={{ d.isoformat() }}#buoc-4">
+              <b>{{ d.day }}</b>
+              <em>{% if d == today %}{{ t('today') }}{% else %}{{ t('day_free', n=free) }}{% endif %}</em>
+            </a>
+            {% else %}
+            <span class="cal-day off" aria-disabled="true">
+              <b>{{ d.day }}</b><em>{{ t('day_closed') }}</em>
+            </span>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </div>
       {% endfor %}
     </div>
   </div>
@@ -129,55 +175,66 @@
 
 {# Steps 4 and 5 — time, then contact details, on one screen. #}
 {% if branch and service and chosen_day %}
-<section class="step">
+<section class="step" id="buoc-4">
   <div class="wrap narrow">
+    <p class="step-label">{{ t('step_of', n=step_no(4), total=total_steps) }}</p>
     <h2>{{ t('step_slot') }} — {{ chosen_day.strftime('%d/%m/%Y') }}</h2>
 
     {% if not slots %}
       <div class="card meta">{{ t('no_slots') }}</div>
     {% else %}
+    <p class="meta" style="margin-bottom:18px">{{ t('hint_slot') }}</p>
     <form method="post" action="{{ canonical_path }}">
       <input type="hidden" name="branch_slug" value="{{ branch.slug }}">
       <input type="hidden" name="service_id" value="{{ service.id }}">
       <input type="hidden" name="day" value="{{ chosen_day.isoformat() }}">
       <input type="hidden" name="locale" value="{{ locale }}">
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px">
-        {% for slot, doc in slots %}
-        <label class="mini alt" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
-          <input type="radio" name="slot" value="{{ slot.strftime('%H:%M') }}" required
-                 {% if loop.first %}checked{% endif %}>
-          {{ slot.strftime('%H:%M') }}
-        </label>
-        {% endfor %}
+      {% for part, times in slots %}
+      {# Jinja has no loop.parent, so the outer loop is captured by hand. The
+         very first time of the day starts selected: it shows the patient what
+         a chosen chip looks like, which is the whole affordance. #}
+      {% set first_group = loop.first %}
+      <div class="slot-group">
+        <p class="part">{{ t(part) }}</p>
+        <div class="slots">
+          {% for slot, doc in times %}
+          <label class="slot">
+            <input type="radio" name="slot" value="{{ slot.strftime('%H:%M') }}" required
+                   {% if first_group and loop.first %}checked{% endif %}>
+            <span>{{ slot.strftime('%H:%M') }}</span>
+          </label>
+          {% endfor %}
+        </div>
       </div>
+      {% endfor %}
 
+      <p class="step-label" style="margin-top:34px" id="buoc-5">
+        {{ t('step_of', n=step_no(5), total=total_steps) }}
+      </p>
       <h2>{{ t('step_contact') }}</h2>
-      <div class="card">
-        <label style="display:block;margin-bottom:12px">
-          <div class="meta">{{ t('your_name') }} *</div>
-          <input name="full_name" required maxlength="80" autocomplete="name"
-                 style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
+      <div class="card" style="margin-top:14px">
+        <label class="field">
+          <span class="meta">{{ t('your_name') }} *</span>
+          <input name="full_name" required maxlength="80" autocomplete="name">
         </label>
-        <label style="display:block;margin-bottom:12px">
-          <div class="meta">{{ t('your_phone') }} *</div>
+        <label class="field">
+          <span class="meta">{{ t('your_phone') }} *</span>
           <input name="phone" required inputmode="tel" autocomplete="tel"
-                 pattern="0[0-9]{8,10}" placeholder="0901234567"
-                 style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px">
+                 pattern="0[0-9]{8,10}" placeholder="0901234567">
         </label>
-        <label style="display:block;margin-bottom:12px">
-          <div class="meta">{{ t('your_note') }}</div>
-          <textarea name="note" rows="2" maxlength="500"
-                    style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:15px"></textarea>
+        <label class="field">
+          <span class="meta">{{ t('your_note') }}</span>
+          <textarea name="note" rows="2" maxlength="500"></textarea>
         </label>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13.5px;margin-bottom:16px">
-          <input type="checkbox" name="consent" value="1" required style="margin-top:3px">
+        <label class="agree">
+          <input type="checkbox" name="consent" value="1" required>
           <span>{{ t('consent') }}</span>
         </label>
-        <button class="btn" type="submit" style="border:0;cursor:pointer;font-family:inherit">
+        <button class="btn" type="submit" style="border:0;cursor:pointer;font-family:inherit;width:100%">
           {{ t('submit') }}
         </button>
-        <p class="meta" style="margin-top:10px">{{ t('not_confirmed') }}</p>
+        <p class="meta" style="margin-top:12px">{{ t('not_confirmed') }}</p>
       </div>
     </form>
     {% endif %}

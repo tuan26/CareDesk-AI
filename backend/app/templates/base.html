@@ -50,7 +50,11 @@
 /* Jumping to a section should look like travelling there, not like the page
    blinked. scroll-margin keeps the heading clear of the very top edge. */
 html{scroll-behavior:smooth}
+/* Enough clearance that the step label and heading are both above the fold when
+   a choice jumps the page to the next question. */
 section[id]{scroll-margin-top:16px}
+section.step[id]{scroll-margin-top:24px}
+[id^="buoc-"]{scroll-margin-top:24px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--ivory);
      line-height:1.65;-webkit-font-smoothing:antialiased}
@@ -141,6 +145,74 @@ section.dark .meta,section.dark .lead{color:rgba(245,241,234,.72)}
 .mini.alt{background:transparent;color:var(--olive)}
 .mini.alt:hover{background:var(--olive);color:var(--ivory)}
 
+/* ---- Step-by-step booking ------------------------------------------------
+   The rule throughout: anything selectable must look selectable and say so in
+   words. A card that is silently a link reads as a description, and the patient
+   waits for a button that never comes. */
+.step-label{font-size:11.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--gold);margin:0 0 10px}
+.step-label.done{color:var(--olive-lt)}
+
+.card.pick{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  text-decoration:none;cursor:pointer}
+.card.pick:hover{border-color:var(--olive);background:var(--ivory-2)}
+.card.pick .mini{flex:none}
+.card.chosen{border-left:3px solid var(--olive)}
+
+/* A calendar, because "which days can I actually come" is the question. Closed
+   and full days stay visible but plainly unavailable — hiding them makes the
+   month look sparse and leaves the patient wondering what happened. */
+.cal{border:1px solid var(--line);background:var(--paper)}
+.cal-head,.cal-week{display:grid;grid-template-columns:repeat(7,1fr)}
+.cal-head span{padding:10px 0;text-align:center;font-size:11px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--line)}
+.cal-day{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  min-height:66px;padding:6px 2px;text-align:center;text-decoration:none;color:var(--ink);
+  border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cal-week .cal-day:last-child{border-right:0}
+.cal-day b{font-family:var(--serif);font-size:20px;font-weight:500;line-height:1}
+.cal-day em{font-style:normal;font-size:10px;letter-spacing:.02em;color:var(--olive-lt)}
+a.cal-day:hover{background:var(--ivory-2);border-color:var(--olive)}
+.cal-day.on{background:var(--olive);color:var(--ivory)}
+.cal-day.on em{color:rgba(245,241,234,.8)}
+/* Readable, just plainly not available. At --line the date faded into the
+   hatching and read as a rendering fault rather than a closed day. */
+.cal-day.off{color:var(--muted);background:repeating-linear-gradient(
+  -45deg,transparent,transparent 5px,rgba(224,217,204,.35) 5px,rgba(224,217,204,.35) 10px)}
+.cal-day.off b{opacity:.65}
+.cal-day.off em{color:var(--muted)}
+.cal-day.empty{background:var(--ivory-2);min-height:66px}
+
+/* Times grouped into morning/afternoon: patients choose a part of the day
+   first, then a time within it. */
+.slot-group{margin-bottom:20px}
+.part{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 8px}
+.slots{display:flex;gap:8px;flex-wrap:wrap}
+.slot input{position:absolute;opacity:0;width:0;height:0}
+.slot span{display:inline-block;padding:10px 16px;font-size:13.5px;font-weight:600;
+  background:var(--paper);border:1px solid var(--line);cursor:pointer}
+.slot span:hover{border-color:var(--olive)}
+.slot input:checked+span{background:var(--olive);color:var(--ivory);border-color:var(--olive)}
+.slot input:focus-visible+span{outline:2px solid var(--gold);outline-offset:2px}
+
+.field{display:block;margin-bottom:14px}
+.field input,.field textarea{width:100%;margin-top:5px;padding:11px 12px;
+  font-family:inherit;font-size:15px;color:var(--ink);background:var(--paper);
+  border:1px solid var(--line)}
+.field input:focus,.field textarea:focus{outline:0;border-color:var(--olive-lt)}
+.agree{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;
+  color:var(--ink-soft);line-height:1.5;margin-bottom:18px}
+.agree input{margin-top:3px;flex:none}
+
+@media(max-width:520px){
+  .cal-day{min-height:56px}
+  .cal-day b{font-size:17px}
+  .cal-day em{font-size:9px}
+  .card.pick{flex-wrap:wrap}
+}
+
 /* The one place the serif runs large and unaccompanied. */
 .quote{font-family:var(--serif);font-size:clamp(24px,3.4vw,40px);line-height:1.35;
        max-width:22ch;margin:0 auto;text-align:center}
@@ -186,13 +258,14 @@ footer a{color:rgba(245,241,234,.9)}
   section{padding:52px 0}
   .stats{gap:26px}
   body{padding-bottom:74px}
+  body.no-sticky{padding-bottom:0}
   .sticky-cta{display:block;position:fixed;left:0;right:0;bottom:0;z-index:40;
               background:var(--paper);border-top:1px solid var(--line);padding:11px 16px}
   .sticky-cta .btn{display:block;text-align:center;padding:14px}
 }
 </style>
 </head>
-<body>
+<body{% if page == 'booking' %} class="no-sticky"{% endif %}>
 
 <header class="hero">
   <div class="wrap">
@@ -280,10 +353,14 @@ footer a{color:rgba(245,241,234,.9)}
   </div>
 </footer>
 
-{# Mobile only: the booking action never scrolls out of reach. #}
+{# Mobile only: the booking action never scrolls out of reach. Not on the
+   booking page itself — there it links to the page the patient is already on,
+   costing 74px of every phone screen to do nothing. #}
+{% if page != 'booking' %}
 <div class="sticky-cta">
   <a class="btn" href="/book/{{ brand.slug }}/dat-lich">{{ c('hero_cta') }}</a>
 </div>
+{% endif %}
 
 {% include "chat_popup.html" %}
 

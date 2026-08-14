@@ -115,17 +115,26 @@ def test_every_in_page_anchor_has_a_target(client, db, branch_count):
         _assert_every_anchor_resolves(response.text, where)
 
 
+#: The marketing sections the shared nav points at. The booking form's own
+#: "#buoc-N" step anchors are a different thing entirely and belong to the form.
+SECTION_ANCHORS = ("dich-vu", "bac-si", "ket-qua", "co-so")
+
+
 def test_the_booking_form_sends_section_links_home(client, db):
-    """The booking form has no marketing sections at all, so every nav link on it
-    has to be a trip back to the brand page rather than a no-op."""
+    """The booking form has no marketing sections at all, so every *nav* link on
+    it has to be a trip back to the brand page rather than a no-op."""
     clinic, _ = _build(db, 2)
 
     html = client.get(f"/book/{clinic.slug}/dat-lich").text
     same_page, cross_page = _anchors(html)
 
-    assert not same_page, f"trang đặt lịch không có section nào, nhưng có neo nội trang: {same_page}"
-    assert any(h.endswith("#dich-vu") for h in cross_page)
-    assert all(h.startswith(f"/book/{clinic.slug}#") for h in cross_page), cross_page
+    assert not [a for a in same_page if a in SECTION_ANCHORS], \
+        f"trang đặt lịch không có section nào, nhưng có neo nội trang: {same_page}"
+
+    section_links = [h for h in cross_page
+                     if h.rsplit("#", 1)[-1] in SECTION_ANCHORS]
+    assert any(h.endswith("#dich-vu") for h in section_links)
+    assert all(h.startswith(f"/book/{clinic.slug}#") for h in section_links), section_links
 
 
 def test_the_branch_page_scrolls_to_its_own_services(client, db):

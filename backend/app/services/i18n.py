@@ -153,6 +153,15 @@ LANDING_TEXT = {
         "done_body": "Yêu cầu đặt lịch lúc {when} đã được gửi tới phòng khám. Lễ tân sẽ liên hệ để xác nhận.",
         "book_another": "Đặt thêm lịch khác", "change": "Đổi",
         "today": "Hôm nay", "tomorrow": "Ngày mai",
+        # --- Chọn từng bước ---
+        "pick": "Chọn", "picked": "Đã chọn", "step_of": "Bước {n}/{total}",
+        "day_closed": "Nghỉ", "day_full": "Hết chỗ", "day_free": "{n} chỗ",
+        "hint_branch": "Chọn cơ sở bạn muốn đến khám.",
+        "hint_service": "Chọn dịch vụ bạn quan tâm. Có thể đổi lại sau khi lễ tân gọi.",
+        "hint_day": "Ngày mờ là ngày phòng khám nghỉ hoặc đã kín lịch.",
+        "hint_slot": "Chọn một khung giờ, rồi để lại số điện thoại.",
+        "morning": "Buổi sáng", "afternoon": "Buổi chiều", "evening": "Buổi tối",
+        "next_days": "14 ngày tới",
         "showcase_nav": "Kết quả", "reviews_title": "Khách hàng nói gì",
         "not_found_body": "Phòng khám hoặc cơ sở này không tồn tại, đã đổi liên kết hoặc đang tạm ngưng.",
     },
@@ -187,6 +196,14 @@ LANDING_TEXT = {
         "done_body": "Your request for {when} has been sent. Reception will contact you to confirm.",
         "book_another": "Book another", "change": "Change",
         "today": "Today", "tomorrow": "Tomorrow",
+        "pick": "Select", "picked": "Selected", "step_of": "Step {n} of {total}",
+        "day_closed": "Closed", "day_full": "Fully booked", "day_free": "{n} slots",
+        "hint_branch": "Choose the location you would like to visit.",
+        "hint_service": "Choose the treatment you are interested in. It can be changed when reception calls.",
+        "hint_day": "Greyed days are closed or fully booked.",
+        "hint_slot": "Pick a time, then leave your phone number.",
+        "morning": "Morning", "afternoon": "Afternoon", "evening": "Evening",
+        "next_days": "Next 14 days",
         "showcase_nav": "Results", "reviews_title": "What our clients say",
         "not_found_body": "This clinic or location does not exist, has moved, or is temporarily unavailable.",
     },
@@ -221,10 +238,32 @@ LANDING_TEXT = {
         "done_body": "{when}のリクエストを送信しました。受付よりご連絡いたします。",
         "book_another": "別の予約をする", "change": "変更",
         "today": "本日", "tomorrow": "明日",
+        "pick": "選択", "picked": "選択済み", "step_of": "ステップ {n}/{total}",
+        "day_closed": "休診", "day_full": "満席", "day_free": "空き{n}枠",
+        "hint_branch": "ご希望の店舗をお選びください。",
+        "hint_service": "ご希望の施術をお選びください。受付からのお電話時に変更できます。",
+        "hint_day": "薄い日付は休診または満席です。",
+        "hint_slot": "時間をお選びのうえ、電話番号をご記入ください。",
+        "morning": "午前", "afternoon": "午後", "evening": "夜間",
+        "next_days": "今後14日間",
         "showcase_nav": "施術例", "reviews_title": "お客様の声",
         "not_found_body": "このクリニックまたは店舗は存在しないか、リンクが変更されたか、一時的に利用できません。",
     },
 }
+
+
+#: Column headings for the day picker, Monday first — the order date.weekday()
+#: already uses, so the grid needs no arithmetic to place a date in a column.
+#: A list, not a LANDING_TEXT entry, because landing_text formats strings.
+WEEKDAY_NAMES = {
+    "vi": ["T2", "T3", "T4", "T5", "T6", "T7", "CN"],
+    "en": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "ja": ["月", "火", "水", "木", "金", "土", "日"],
+}
+
+
+def weekday_names(locale: str) -> list:
+    return WEEKDAY_NAMES.get(normalize_locale(locale), WEEKDAY_NAMES["en"])
 
 
 def landing_text(locale: str, key: str, **values: Any) -> str:
