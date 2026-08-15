@@ -167,7 +167,7 @@ def create_patient(
     data["clinic_id"] = current_user.clinic_id or data.get("clinic_id")
     patient = PatientLead(**data)
     if patient.consent_given:
-        patient.consent_timestamp = datetime.utcnow()
+        patient.consent_timestamp = clock.now()
     db.add(patient)
     log_action(db, current_user.id, "create_patient", f"Tạo hồ sơ khách: {patient.full_name}")
     db.commit()

@@ -18,6 +18,7 @@ from backend.app.services.channel_gateway import (
 )
 from backend.app.services.rate_limit import chat_rate_limiter
 from backend.app.services.ws_manager import ws_manager
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -41,7 +42,7 @@ def _handle_inbound_message(db: Session, clinic_id: int, channel: str,
             source=channel,
             external_id=external_id,
             consent_given=True,  # implied by messaging the OA/Page first
-            consent_timestamp=datetime.utcnow()
+            consent_timestamp=clock.now()
         )
         db.add(lead)
         db.commit()
@@ -59,7 +60,7 @@ def _handle_inbound_message(db: Session, clinic_id: int, channel: str,
 
     # Save inbound patient message
     db.add(Message(conversation_id=conv.id, sender="patient", content=text))
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = clock.now()
     db.commit()
 
     # AI reply only when the bot is active
@@ -202,7 +203,7 @@ def _handle_page_comment(db: Session, clinic_id: int, value: dict):
             lead = PatientLead(
                 clinic_id=clinic_id, full_name=f"Khách FB comment •{commenter_id[-4:]}",
                 source="facebook", external_id=commenter_id, consent_given=True,
-                consent_timestamp=datetime.utcnow()
+                consent_timestamp=clock.now()
             )
             db.add(lead)
             db.flush()

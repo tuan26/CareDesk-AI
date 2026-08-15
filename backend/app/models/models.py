@@ -311,6 +311,11 @@ class Conversation(Base):
     patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="CASCADE"), nullable=False)
     channel = Column(String, default="web")  # web | zalo | facebook
     status = Column(String, default="bot_active")  # bot_active | handoff_requested | agent_active
+    # Why a human was called for. Decides whether the assistant may keep
+    # answering while the queue is unattended: after a safety trigger it must
+    # not, after "em không có thông tin đó" silence is worse than an answer.
+    # See core/handoff.py.
+    handoff_reason = Column(String, nullable=True)
     locale = Column(String, nullable=True)  # Explicit patient locale; NULL uses Clinic.default_locale
     # Which location the patient arrived from (/chat/<brand>/<branch>). Without
     # it the booking flow just took the first doctor with a free slot, so every

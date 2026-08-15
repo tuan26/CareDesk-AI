@@ -104,14 +104,20 @@ def test_no_backend_code_reaches_for_the_machine_clock():
     """A single datetime.now() reintroduces the split the moment it runs on a
     UTC server — and it would look correct on a laptop in Hanoi, which is how it
     got here in the first place."""
+    # JWT "exp" is defined in UTC seconds by the spec, and the public chat
+    # session writes and compares its own aware-UTC pair — neither touches a
+    # clinic-time column, so both keep their own clock on purpose.
+    allowed = {"app/core/security.py", "app/services/public_chat_session.py"}
+
     offenders = []
-    root = Path(clock.__file__).resolve().parents[2]      # backend/app
+    root = Path(clock.__file__).resolve().parents[2]      # backend/
     for path in root.rglob("*.py"):
-        if path.name == "clock.py":
+        relative = path.relative_to(root).as_posix()
+        if path.name == "clock.py" or relative in allowed:
             continue
         text = path.read_text(encoding="utf-8")
-        for pattern in (r"\bdatetime\.now\(\)", r"\bdate\.today\(\)"):
+        for pattern in (r"\bdatetime\.now\(\)", r"\bdate\.today\(\)", r"\bdatetime\.utcnow\(\)"):
             if re.search(pattern, text):
-                offenders.append(f"{path.relative_to(root)}: {pattern}")
+                offenders.append(f"{relative}: {pattern}")
 
     assert not offenders, "dùng đồng hồ máy thay vì clock.now(): " + ", ".join(offenders)

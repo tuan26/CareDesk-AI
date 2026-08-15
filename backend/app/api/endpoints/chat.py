@@ -18,6 +18,8 @@ from backend.app.services.public_chat_session import (
     issue_public_chat_session, verify_and_rotate_public_chat_session,
 )
 from backend.app.core.config import settings
+from backend.app.core import clock
+from backend.app.core.handoff import assistant_may_reply
 
 router = APIRouter()
 
@@ -93,7 +95,7 @@ def start_conversation(
             source=lead_in.source,
             referred_by_patient_id=referred_by,
             consent_given=True,
-            consent_timestamp=datetime.utcnow()
+            consent_timestamp=clock.now()
         )
         db.add(patient)
         db.commit()
@@ -101,7 +103,7 @@ def start_conversation(
     else:
         # Update consent
         patient.consent_given = True
-        patient.consent_timestamp = datetime.utcnow()
+        patient.consent_timestamp = clock.now()
         db.commit()
 
     # Pin the location the patient arrived from, so the booking flow proposes
@@ -164,12 +166,18 @@ def send_message(
         content=msg_in.content
     )
     db.add(patient_msg)
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = clock.now()
     db.commit()
     db.refresh(patient_msg)
 
-    # Human is (or will be) handling: store only, notify staff, no bot reply
-    if conv.status in ("handoff_requested", "agent_active"):
+    # A receptionist typing, or a handoff the assistant must not talk over:
+    # store, alert staff, say nothing.
+    #
+    # "Waiting for a human" is not the same as "a human is here". Treating them
+    # alike meant every message sent while the queue was unattended — nights,
+    # weekends — got no reply at all. Patients asked answerable questions twice
+    # into silence and left. See core/handoff.py.
+    if not assistant_may_reply(conv.status, conv.handoff_reason):
         ws_manager.notify(conv.clinic_id, {"type": "message", "conversation_id": conv.id, "sender": "patient"})
         return patient_msg
 
@@ -250,7 +258,7 @@ def send_agent_message(
         content=msg_in.content
     )
     db.add(agent_msg)
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = clock.now()
     db.commit()
     db.refresh(agent_msg)
 

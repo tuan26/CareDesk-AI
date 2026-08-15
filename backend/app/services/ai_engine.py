@@ -14,7 +14,7 @@ from backend.app.models.models import (
 from backend.app.services.i18n import (
     locale_for_conversation, normalize_locale, say as _say, service_content,
 )
-from backend.app.core import clock
+from backend.app.core import clock, handoff
 
 logger = logging.getLogger(__name__)
 
@@ -531,6 +531,7 @@ def handle_review_reply(db: Session, conv: Conversation, user_message: str) -> O
     review.status = "escalated"
     review.feedback = user_message
     conv.status = "handoff_requested"
+    conv.handoff_reason = handoff.REVIEW
     db.commit()
     from backend.app.services.ws_manager import ws_manager
     ws_manager.notify(conv.clinic_id, {"type": "review_alert", "conversation_id": conv.id,
@@ -615,6 +616,7 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     if safety_rule:
         # Trigger handoff
         conv.status = "handoff_requested"
+        conv.handoff_reason = handoff.SAFETY
         db.commit()
         
         # Save bot response
@@ -643,6 +645,7 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
                              "Tôi đã chuyển thông tin của bạn cho lễ tân hỗ trợ trực tiếp, "
                              "hoặc bạn vui lòng liên hệ hotline của phòng khám nhé!")
                 conv.status = "handoff_requested"
+                conv.handoff_reason = handoff.QUOTA
                 bot_msg = Message(
                     conversation_id=conversation_id, sender="bot", content=quota_msg,
                     evaluation_metadata={"quota_exceeded": True}
@@ -816,6 +819,7 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
 
     if is_handoff:
         conv.status = "handoff_requested"
+        conv.handoff_reason = reason
         evaluation_meta["handoff_reason"] = reason
         ai_response = f"{ai_response}\n\n{_handoff_note(db, conv, locale)}".strip()
         from backend.app.services.ws_manager import ws_manager

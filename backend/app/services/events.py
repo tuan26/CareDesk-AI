@@ -71,7 +71,7 @@ def deliver_to_patient(db: Session, patient: PatientLead, text: str) -> bool:
     if conv:
         db.add(Message(conversation_id=conv.id, sender="bot", content=text,
                        evaluation_metadata={"automation": True}))
-        conv.updated_at = datetime.utcnow()
+        conv.updated_at = clock.now()
         if conv.channel == "zalo" and patient.external_id:
             return send_zalo_message(db, conv.clinic_id, patient.external_id, text)
         if conv.channel == "facebook" and patient.external_id:
