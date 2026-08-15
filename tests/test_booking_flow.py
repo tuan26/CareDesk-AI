@@ -90,8 +90,14 @@ def test_booking_end_to_end(db_session):
     request = db.query(BookingRequest).first()
     assert request is not None
     assert request.status == "requested"
-    assert request.preferred_time.endswith(proposed[0])
+    # The timestamp is the data; preferred_time is how it reads to reception.
+    assert request.preferred_at.strftime("%H:%M") == proposed[0]
+    assert proposed[0] in request.preferred_time
     assert request.patient_id == conv.patient_id
+    # Which location and which doctor, so reception is not sent back into the
+    # conversation to find out what the patient was offered.
+    assert request.doctor_id is not None
+    assert request.branch_id is not None
     assert db.query(Appointment).count() == 0
 
 

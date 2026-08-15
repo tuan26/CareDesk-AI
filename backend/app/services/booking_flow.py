@@ -5,7 +5,7 @@ calendar integration may create a confirmed Appointment.
 """
 import re
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from backend.app.models.models import (
@@ -312,6 +312,20 @@ def _fmt_date(iso_date: str, locale: str) -> str:
     return f"{days[d.weekday()]} ngày {d.strftime('%d/%m/%Y')}"
 
 
+def _fmt_slot(when: datetime, locale: str) -> str:
+    """One reading of a requested time across every entry point.
+
+    The chat wrote "2026-08-16 18:00" and the web form wrote "10:30 16/08/2026
+    — Chi nhánh Quận 10", in the same column, in the same list. A receptionist
+    scanning that column had to switch formats between rows.
+    """
+    if locale == "ja":
+        return when.strftime("%Y年%m月%d日 %H:%M")
+    if locale == "en":
+        return when.strftime("%H:%M %d %b %Y")
+    return when.strftime("%H:%M %d/%m/%Y")
+
+
 def handle_booking(db: Session, conv: Conversation, user_message: str) -> Optional[str]:
     """
     Advance the booking state machine with a new patient message.
@@ -514,14 +528,24 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # All details are present. A public chat never reserves inventory or creates an
     # appointment: it records only the patient's preference for staff confirmation.
     service_name = service_content(service, locale)["name"]
-    preferred_time = f"{state['date']} {state['slot']}"
+    # The chat already knows both — it pinned the branch when the patient arrived
+    # and named the doctor when it quoted times. Dropping them left reception
+    # with a request that said neither.
+    branch_id = state.get("branch_id") or conv.branch_id
+    doctor_id = state.get("doctor_id")
+    preferred_at = datetime.combine(date.fromisoformat(state["date"]),
+                                    time.fromisoformat(state["slot"]))
+    preferred_time = _fmt_slot(preferred_at, locale)
     request = BookingRequest(
         clinic_id=conv.clinic_id,
         conversation_id=conv.id,
         patient_id=conv.patient_id,
         service_id=service.id,
+        branch_id=branch_id,
+        doctor_id=doctor_id,
         locale=locale,
         service_or_need=service_name,
+        preferred_at=preferred_at,
         preferred_time=preferred_time,
         full_name=state["full_name"],
         contact_method="phone",

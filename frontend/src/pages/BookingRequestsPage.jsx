@@ -64,15 +64,20 @@ export default function BookingRequestsPage() {
 
   const openConvert = (request) => {
     const service = services.find((item) => item.id === request.service_id);
-    const [date, slot] = (request.preferred_time || '').split(' ');
+    // preferred_at is a real timestamp. Splitting preferred_time on a space
+    // guessed at a format that differed between the chat and the web form, so
+    // the dialog opened on the wrong day for one of them.
+    const when = request.preferred_at ? new Date(request.preferred_at) : null;
     setSelected(request);
     setSlots([]);
     setError('');
     setForm({
-      doctor_id: doctors.find((doctor) => doctor.is_active)?.id?.toString() || '',
-      branch_id: branches[0]?.id?.toString() || '',
-      date: toLocalDate(date),
-      slot: slot || '',
+      // The location and doctor the patient was actually offered, not whichever
+      // happens to be first in the list.
+      doctor_id: (request.doctor_id || doctors.find((doctor) => doctor.is_active)?.id || '').toString(),
+      branch_id: (request.branch_id || branches[0]?.id || '').toString(),
+      date: when ? toLocalDate(when.toISOString().slice(0, 10)) : '',
+      slot: when ? when.toTimeString().slice(0, 5) : '',
       note: request.note || '',
       duration: service?.duration_minutes || 30,
     });
@@ -114,8 +119,13 @@ export default function BookingRequestsPage() {
         </select>
       </div>
       {loading ? <div style={{ padding: 28, textAlign: 'center' }}>Đang tải...</div> : requests.length === 0 ? <div style={{ padding: 28, textAlign: 'center' }}>Không có yêu cầu phù hợp.</div> :
-        <table className="custom-table"><thead><tr><th>Khách hàng</th><th>Nhu cầu / dịch vụ</th><th>Thời gian mong muốn</th><th>Ngôn ngữ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
-          {requests.map((request) => <tr key={request.id}><td><b>{request.full_name}</b><br /><small>{request.contact_value}</small></td><td>{request.service_or_need}<br /><small>{request.note}</small></td><td>{request.preferred_time || 'Chưa chọn'}</td><td>{request.locale.toUpperCase()}</td><td><span className={`badge ${request.status === 'converted' ? 'completed' : request.status === 'cancelled' ? 'cancelled' : 'pending'}`}>{STATUS[request.status]}</span></td><td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <table className="custom-table"><thead><tr><th>Khách hàng</th><th>Nhu cầu / dịch vụ</th><th>Cơ sở / bác sĩ</th><th>Thời gian mong muốn</th><th>Ngôn ngữ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
+          {requests.map((request) => <tr key={request.id}><td><b>{request.full_name}</b><br /><small>{request.contact_value}</small></td><td>{request.service_or_need}<br /><small>{request.note}</small></td>
+            {/* Reception assigns work by location. A request that names neither
+                sends them back into the conversation to find out. */}
+            <td>{request.branch_name || <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Khách chưa chọn</span>}
+              {request.doctor_name && <><br /><small>{request.doctor_name}</small></>}</td>
+            <td>{request.preferred_time || 'Chưa chọn'}</td><td>{request.locale.toUpperCase()}</td><td><span className={`badge ${request.status === 'converted' ? 'completed' : request.status === 'cancelled' ? 'cancelled' : 'pending'}`}>{STATUS[request.status]}</span></td><td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {request.status === 'requested' && <button className="btn btn-secondary btn-sm" onClick={() => changeStatus(request, 'contacted')}>Đã liên hệ</button>}
             {['requested', 'contacted'].includes(request.status) && <button className="btn btn-primary btn-sm" onClick={() => openConvert(request)}>Tạo lịch hẹn</button>}
             {['requested', 'contacted'].includes(request.status) && <button className="btn btn-danger btn-sm" onClick={() => changeStatus(request, 'cancelled')}>Hủy</button>}

@@ -23,6 +23,20 @@ def _scoped(query, user: User):
     return query.filter(BookingRequest.clinic_id == user.clinic_id) if user.clinic_id else query
 
 
+def _out(request: BookingRequest) -> BookingRequestOut:
+    """Resolve the location and doctor to names.
+
+    Reception assigns work by branch. An id is not something anyone can act on,
+    and reopening the conversation to find out which clinic the patient meant is
+    the manual step this queue exists to remove.
+    """
+    return BookingRequestOut(
+        **{c.name: getattr(request, c.name) for c in BookingRequest.__table__.columns},
+        branch_name=request.branch.name if request.branch else None,
+        doctor_name=request.doctor.name if request.doctor else None,
+    )
+
+
 @router.get("", response_model=List[BookingRequestOut])
 def list_booking_requests(
     request_status: Optional[str] = None,
@@ -32,7 +46,7 @@ def list_booking_requests(
     query = _scoped(db.query(BookingRequest), current_user)
     if request_status:
         query = query.filter(BookingRequest.status == request_status)
-    return query.order_by(BookingRequest.created_at.desc()).all()
+    return [_out(r) for r in query.order_by(BookingRequest.created_at.desc()).all()]
 
 
 @router.post("/{request_id}/convert", response_model=AppointmentOut)
@@ -121,4 +135,4 @@ def update_booking_request_status(
     log_action(db, current_user.id, "update_booking_request", f"Booking request #{request.id} -> {request.status}")
     db.commit()
     db.refresh(request)
-    return request
+    return _out(request)

@@ -511,8 +511,18 @@ class BookingRequest(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
     patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="SET NULL"), nullable=True, index=True)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Which location, and which doctor was offered. Both are known when the
+    # request is made — the chat pins a branch and names a doctor before quoting
+    # times — and both used to be dropped, so the receptionist saw a request with
+    # no clinic and no doctor and had to reopen the conversation to find out.
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True, index=True)
     locale = Column(String, nullable=False, default="vi")
     service_or_need = Column(Text, nullable=False)
+    #: When the patient asked to come, as a real timestamp. preferred_time stays
+    #: for what they actually said — "chiều thứ 5 nào cũng được" is a legitimate
+    #: answer that no column can hold.
+    preferred_at = Column(DateTime(timezone=True), nullable=True, index=True)
     preferred_time = Column(String, nullable=True)
     full_name = Column(String, nullable=False)
     contact_method = Column(String, nullable=False, default="phone")
@@ -523,6 +533,8 @@ class BookingRequest(Base):
 
     service = relationship("Service")
     patient = relationship("PatientLead")
+    branch = relationship("Branch")
+    doctor = relationship("Doctor")
 
 
 class AISafetyRule(Base):

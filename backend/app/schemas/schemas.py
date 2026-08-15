@@ -478,8 +478,14 @@ class BookingRequestOut(BaseModel):
     conversation_id: Optional[int] = None
     patient_id: Optional[int] = None
     service_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    doctor_id: Optional[int] = None
+    # Resolved names, so reception reads "Chi nhánh Quận 10" rather than "3".
+    branch_name: Optional[str] = None
+    doctor_name: Optional[str] = None
     locale: str
     service_or_need: str
+    preferred_at: Optional[datetime] = None
     preferred_time: Optional[str] = None
     full_name: str
     contact_method: str

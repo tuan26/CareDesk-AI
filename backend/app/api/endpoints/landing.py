@@ -9,7 +9,7 @@ exist for.
 import html
 import json
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
@@ -358,7 +358,7 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
     calendar under the clinic's control and means a bot filling in the form
     cannot occupy real slots.
     """
-    from backend.app.services.booking_flow import open_slots
+    from backend.app.services.booking_flow import _fmt_slot, open_slots
 
     try:
         brand = load_brand(db, slug)
@@ -409,13 +409,19 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
     attribution.apply_to_lead(patient, attribution.read_cookie(request))
     db.add(patient)
     db.flush()
+    # The branch is a column now, not a suffix on the time string: reception
+    # filters and assigns by location, which no amount of free text supports.
+    locale = normalize_locale(form.get("locale") or brand.default_locale)
+    preferred_at = datetime.combine(target, time.fromisoformat(slot))
     db.add(BookingRequest(
         clinic_id=clinic_id, patient_id=patient.id, service_id=service.id,
+        branch_id=branch.id,
         service_or_need=service.name,
-        preferred_time=f"{slot} {target.strftime('%d/%m/%Y')} — {branch.name}",
+        preferred_at=preferred_at,
+        preferred_time=_fmt_slot(preferred_at, locale),
         full_name=full_name, contact_method="phone", contact_value=phone,
         note=(form.get("note") or "").strip() or None,
-        locale=normalize_locale(form.get("locale") or brand.default_locale),
+        locale=locale,
     ))
     emit_event(db, clinic_id, "booking_request_created", patient_id=patient.id,
                payload={"service_id": service.id, "service_name": service.name,
