@@ -29,6 +29,7 @@ from backend.app.models.models import (
 )
 from backend.app.services.audit import log_action
 from backend.app.services.events import emit_event
+from backend.app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def todays_queue(
     current_user: User = Depends(verify_receptionist_or_above),
 ) -> Any:
     """Everyone expected today, in the order they are due."""
-    target = datetime.fromisoformat(day).date() if day else datetime.now().date()
+    target = datetime.fromisoformat(day).date() if day else clock.now().date()
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
 
@@ -94,7 +95,7 @@ def todays_queue(
     if current_user.clinic_id:
         query = query.filter(Appointment.clinic_id == current_user.clinic_id)
 
-    now = datetime.now()
+    now = clock.now()
     out = []
     for appt in query.order_by(Appointment.start_time).all():
         waited = None
@@ -142,7 +143,7 @@ def mark_arrived(appt_id: int, db: Session = Depends(get_db),
     appt = _get_appointment(db, appt_id, current_user)
     if appt.status in ("cancelled", "completed", "no_show"):
         raise HTTPException(status_code=409, detail="Lịch hẹn này đã kết thúc.")
-    appt.arrived_at = appt.arrived_at or datetime.now()
+    appt.arrived_at = appt.arrived_at or clock.now()
     # Arriving is the strongest possible confirmation: they are standing here.
     if appt.status == "pending":
         appt.status = "confirmed"
@@ -157,7 +158,7 @@ def mark_started(appt_id: int, db: Session = Depends(get_db),
     appt = _get_appointment(db, appt_id, current_user)
     if appt.status in ("cancelled", "completed", "no_show"):
         raise HTTPException(status_code=409, detail="Lịch hẹn này đã kết thúc.")
-    now = datetime.now()
+    now = clock.now()
     appt.arrived_at = appt.arrived_at or now   # walk-in: started without checking in
     appt.started_at = appt.started_at or now
     log_action(db, current_user.id, "queue_start", f"Bắt đầu khám — lịch hẹn #{appt.id}")
@@ -254,7 +255,7 @@ def save_visit_record(appt_id: int, body: VisitRecordIn,
         from backend.app.api.endpoints.appointment import handle_status_transition
         old = appt.status
         appt.status = "completed"
-        appt.started_at = appt.started_at or datetime.now()
+        appt.started_at = appt.started_at or clock.now()
         # Revenue, review request and the recall chain all hang off this.
         handle_status_transition(db, appt, old)
 

@@ -14,6 +14,7 @@ from backend.app.models.models import (
 )
 from backend.app.schemas.schemas import CopilotAsk
 from backend.app.services.features import COPILOT
+from backend.app.core import clock
 
 router = APIRouter(dependencies=[Depends(FeatureRequired(COPILOT))])
 
@@ -27,13 +28,13 @@ def _scoped(query, model, user: User):
 
 
 def _range_today():
-    today = date.today()
+    today = clock.today()
     return datetime.combine(today, datetime.min.time()), datetime.combine(today, datetime.max.time())
 
 
 def _range_month():
-    start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start, datetime.now()
+    start = clock.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start, clock.now()
 
 
 def answer_appointments(db: Session, user: User, month: bool) -> str:
@@ -152,4 +153,4 @@ def copilot_ask(
     else:
         answer = HELP_TEXT
 
-    return {"question": ask.question, "answer": answer, "answered_at": datetime.now().isoformat()}
+    return {"question": ask.question, "answer": answer, "answered_at": clock.now().isoformat()}

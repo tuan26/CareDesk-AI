@@ -20,6 +20,7 @@ from backend.app.schemas.schemas import (
 )
 from backend.app.services.tenant_stats import clinic_metrics, aggregate
 from backend.app.services.audit import log_action
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ def _apply_plan(clinic: Clinic, plan: Plan, fee_override: Optional[float] = None
     clinic.ai_quota_monthly = plan.monthly_quota
     clinic.monthly_fee = fee_override if fee_override is not None else plan.price
     if plan.trial_days and plan.trial_days > 0:
-        clinic.trial_ends_at = datetime.now() + timedelta(days=plan.trial_days)
+        clinic.trial_ends_at = clock.now() + timedelta(days=plan.trial_days)
     else:
         clinic.trial_ends_at = None
 

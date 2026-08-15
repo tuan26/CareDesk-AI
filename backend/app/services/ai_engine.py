@@ -14,6 +14,7 @@ from backend.app.models.models import (
 from backend.app.services.i18n import (
     locale_for_conversation, normalize_locale, say as _say, service_content,
 )
+from backend.app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def is_within_working_hours(db: Session, clinic_id: Optional[int],
     A clinic with no schedule at all is treated as open, so a half-configured
     clinic does not tell every patient it is closed.
     """
-    when = when or datetime.now()
+    when = when or clock.now()
     query = db.query(WorkingSchedule).join(Doctor, WorkingSchedule.doctor_id == Doctor.id)
     if clinic_id:
         query = query.filter(Doctor.clinic_id == clinic_id)
@@ -188,7 +189,7 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
     # An expired deposit hold no longer blocks anyone. The scheduler cancels
     # these within a minute, but filtering here means a patient asking in that
     # gap is not told the slot is taken when it is already free.
-    now = datetime.now()
+    now = clock.now()
     existing_appointments = [
         a for a in existing_appointments
         if not (a.status == STATUS_AWAITING_DEPOSIT
@@ -227,7 +228,7 @@ def get_available_slots(db: Session, doctor_id: int, target_date: date, duration
                     break
 
             # Check if slot is in the past (only for today)
-            if target_date == date.today() and slot_start < datetime.now():
+            if target_date == clock.today() and slot_start < clock.now():
                 overlap = True
                 
             if not overlap:
@@ -292,6 +293,22 @@ def build_clinic_identity(db: Session, clinic: Optional[Clinic],
         for b in others:
             hours = f" — giờ làm việc {b.working_hours}" if b.working_hours else ""
             lines.append(f"- {b.name}: {b.address}{hours}.")
+
+    # "Có những bác sĩ nào?" is one of the three questions every patient asks,
+    # and the answer was sitting in the doctors table unread — so the model
+    # correctly reported that it had no such data and handed the patient to a
+    # receptionist who then read it out loud.
+    doctors = db.query(Doctor).filter(
+        Doctor.clinic_id == clinic.id, Doctor.is_active == True).all()  # noqa: E712
+    if chosen:
+        # A doctor with no branch works everywhere; only exclude the ones posted
+        # somewhere else.
+        doctors = [d for d in doctors if d.branch_id in (None, chosen.id)]
+    if doctors:
+        lines.append("Đội ngũ bác sĩ:")
+        for d in doctors:
+            specialty = f" — {d.specialty}" if d.specialty else ""
+            lines.append(f"- {d.name}{specialty}.")
     return "\n".join(lines)
 
 
@@ -375,16 +392,16 @@ def extract_booking_entities_mock(text: str) -> Dict[str, Any]:
         
     # Extract time/date (very simple mock)
     if "mai" in text_lower:
-        entities["date_str"] = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+        entities["date_str"] = (clock.today() + timedelta(days=1)).strftime("%Y-%m-%d")
     elif "thứ 7" in text_lower or "thu 7" in text_lower:
         # Find next Saturday
-        today = date.today()
+        today = clock.today()
         days_ahead = 5 - today.weekday()
         if days_ahead <= 0: # Already Saturday or Sunday
             days_ahead += 7
         entities["date_str"] = (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
     elif "hôm nay" in text_lower:
-        entities["date_str"] = date.today().strftime("%Y-%m-%d")
+        entities["date_str"] = clock.today().strftime("%Y-%m-%d")
         
     # Time match (e.g. "8h", "9 giờ", "14:30")
     time_match = re.search(r'(\d{1,2})(?:\s*h|\s*giờ)(?:\s*(\d{2}))?', text_lower)
@@ -492,7 +509,7 @@ def handle_review_reply(db: Session, conv: Conversation, user_message: str) -> O
 
     rating = int(m.group(1))
     review.rating = rating
-    review.answered_at = datetime.now()
+    review.answered_at = clock.now()
     patient = conv.patient
     clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first() if conv.clinic_id else None
 
@@ -615,7 +632,7 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     if conv.clinic_id:
         clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first()
         if clinic and clinic.ai_quota_monthly is not None:  # None = unlimited; 0 = blocked
-            month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_start = clock.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             used = db.query(Message).join(Conversation, Message.conversation_id == Conversation.id).filter(
                 Conversation.clinic_id == conv.clinic_id,
                 Message.sender == "bot",

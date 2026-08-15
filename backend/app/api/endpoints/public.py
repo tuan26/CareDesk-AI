@@ -17,6 +17,7 @@ from backend.app.services.reminder import verify_public_token
 from backend.app.services.rate_limit import public_rate_limiter
 from backend.app.services.audit import log_action
 from backend.app.services.ws_manager import ws_manager
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -271,7 +272,7 @@ def public_reschedule(appt_id: int, token: str = "", day: str = "", slot: str = 
                  f"tại {appt.branch.name}.<br>Hẹn gặp bạn!")
 
     # Step 1: offer the next few days that actually have room.
-    today = date.today()
+    today = clock.today()
     options = []
     for offset in range(14):
         d = today + timedelta(days=offset)

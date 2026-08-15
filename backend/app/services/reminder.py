@@ -15,6 +15,7 @@ from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Appointment, ReminderLog
 from backend.app.services.channel_gateway import CHANNEL_NONE, send_zns_or_sms
+from backend.app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ async def check_and_send_reminders():
     sent_count = 0
     undelivered = 0
     try:
-        now = datetime.now()
+        now = clock.now()
         for kind, hours in REMINDER_KINDS:
             window_end = now + timedelta(hours=hours)
             candidates = db.query(Appointment).filter(
@@ -211,7 +212,7 @@ async def send_daily_digest():
 
     db = SessionLocal()
     try:
-        now = datetime.now()
+        now = clock.now()
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         clinics = db.query(Clinic).filter(Clinic.digest_enabled == True).all()  # noqa: E712
         for clinic in clinics:
@@ -272,7 +273,7 @@ async def reminder_loop():
             # the market when the waitlist automation runs in the same tick.
             release_expired_holds(db)
             run_engine_tick(db)
-            now = datetime.now()
+            now = clock.now()
             # Recurring rules (win-back, package expiry): once per hour is plenty
             if last_recurring_run is None or (now - last_recurring_run).total_seconds() > 3600:
                 run_recurring_rules(db)
@@ -283,7 +284,7 @@ async def reminder_loop():
             db.close()
 
         # Owner digest at 08h and 20h (once per slot)
-        now = datetime.now()
+        now = clock.now()
         slot = (now.date(), 8 if now.hour < 20 else 20)
         if now.hour in (8, 20) and slot != last_digest_slot:
             await send_daily_digest()

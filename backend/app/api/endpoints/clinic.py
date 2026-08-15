@@ -18,6 +18,7 @@ from backend.app.schemas.schemas import (
 )
 from backend.app.core.slug import assign_slug, change_slug
 from backend.app.services.audit import log_action
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -342,7 +343,7 @@ def list_time_off(
 ) -> Any:
     query = _scoped(db.query(DoctorTimeOff), DoctorTimeOff, current_user)
     if upcoming_only:
-        query = query.filter(DoctorTimeOff.end_date >= date.today())
+        query = query.filter(DoctorTimeOff.end_date >= clock.today())
     rows = query.order_by(DoctorTimeOff.start_date).all()
     return [
         TimeOffOut(

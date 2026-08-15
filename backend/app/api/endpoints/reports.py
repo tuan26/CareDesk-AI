@@ -15,6 +15,7 @@ from backend.app.models.models import (
 )
 from backend.app.services.retention import return_rate
 from backend.app.services import funnel as funnel_service
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ def get_report_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(verify_owner)
 ) -> Any:
-    end_date = end_date or date.today()
+    end_date = end_date or clock.today()
     start_date = start_date or (end_date - timedelta(days=29))
     range_start = datetime.combine(start_date, datetime.min.time())
     range_end = datetime.combine(end_date, datetime.max.time())

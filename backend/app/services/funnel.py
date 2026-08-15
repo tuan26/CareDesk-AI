@@ -26,6 +26,7 @@ from backend.app.models.models import (
     Appointment, BookingRequest, Conversation, PatientLead, RevenueRecord,
 )
 from backend.app.services.attribution import channel_of
+from backend.app.core import clock
 
 
 @dataclass
@@ -92,7 +93,7 @@ def build(db: Session, clinic_id: Optional[int],
           start_date: Optional[date] = None,
           end_date: Optional[date] = None,
           by_campaign: bool = False) -> Funnel:
-    end_date = end_date or date.today()
+    end_date = end_date or clock.today()
     start_date = start_date or (end_date - timedelta(days=29))
     start = datetime.combine(start_date, datetime.min.time())
     end = datetime.combine(end_date, datetime.max.time())
@@ -151,7 +152,7 @@ def confirmation_speed(db: Session, clinic_id: Optional[int],
     ring people back" look identical in a conversion rate and have completely
     different fixes. One is a budget decision; the other is a rota.
     """
-    end_date = end_date or date.today()
+    end_date = end_date or clock.today()
     start_date = start_date or (end_date - timedelta(days=29))
     start = datetime.combine(start_date, datetime.min.time())
     end = datetime.combine(end_date, datetime.max.time())
@@ -198,7 +199,7 @@ def ai_contribution(db: Session, clinic_id: Optional[int],
     """What the AI itself did, which is a different question from the channel
     report: "which advert paid for this patient" versus "did the subscription
     earn its keep". Both get asked, usually in the same meeting."""
-    end_date = end_date or date.today()
+    end_date = end_date or clock.today()
     start_date = start_date or (end_date - timedelta(days=29))
     start = datetime.combine(start_date, datetime.min.time())
     end = datetime.combine(end_date, datetime.max.time())

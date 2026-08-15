@@ -14,6 +14,7 @@ from backend.app.models.models import (
 )
 from backend.app.services.i18n import booking_text, locale_for_conversation, service_content
 from backend.app.services.events import emit_event
+from backend.app.core import clock
 
 def strip_accents(text: str) -> str:
     """Fold Vietnamese text to plain ASCII-ish lowercase for keyword matching.
@@ -82,7 +83,11 @@ from backend.app.services.i18n import say as _say
 SERVICE_KEYWORD_MAP = [
     (["nặn mụn", "trị mụn", "mụn"], "Điều trị mụn Chuẩn Y Khoa"),
     (["laser", "sẹo", "co2"], "Laser Fractional CO2 trị sẹo rỗ"),
-    (["khám", "soi da", "bác sĩ"], "Khám da liễu với Bác sĩ chuyên khoa"),
+    # "bác sĩ" used to sit in this row. It is not a service word — it is how
+    # every question about the team starts. "Có những bác sĩ nào?" resolved to
+    # the consultation service, counted as the patient choosing it, and got
+    # answered with a list of free slots.
+    (["khám", "soi da"], "Khám da liễu với Bác sĩ chuyên khoa"),
 ]
 
 WEEKDAY_PATTERNS = [
@@ -94,7 +99,7 @@ WEEKDAY_PATTERNS = [
 
 def _parse_date(text_lower: str) -> Optional[str]:
     """Parse a target date from Vietnamese text. Returns ISO date string."""
-    today = date.today()
+    today = clock.today()
     if "ngày kia" in text_lower or "day after tomorrow" in text_lower or "明後日" in text_lower:
         return (today + timedelta(days=2)).isoformat()
     if "mai" in text_lower or "tomorrow" in text_lower or "明日" in text_lower:
@@ -455,7 +460,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
                 f"Bạn muốn khám vào ngày nào ạ? (ví dụ: ngày mai, thứ 7, hoặc 25/07)")
 
     target_date = date.fromisoformat(state["date"])
-    if target_date < date.today():
+    if target_date < clock.today():
         state.pop("date", None)
         conv.booking_state = state
         db.commit()

@@ -25,6 +25,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
+from backend.app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def remember(request, response) -> Dict[str, Any]:
     stored = _normalise(read_cookie(request))
     current = from_request(request)
     identifiable = any(current.get(f) for f in ("utm_source", "utm_campaign", "referrer"))
-    now = datetime.now().isoformat()
+    now = clock.now().isoformat()
 
     if not stored:
         if not identifiable:
@@ -179,9 +180,9 @@ def apply_to_lead(lead, data: Optional[Dict[str, Any]]) -> None:
 
 def _parse(raw: Optional[str]) -> datetime:
     try:
-        return datetime.fromisoformat(raw) if raw else datetime.now()
+        return datetime.fromisoformat(raw) if raw else clock.now()
     except (ValueError, TypeError):
-        return datetime.now()
+        return clock.now()
 
 
 def channel_of(lead) -> str:

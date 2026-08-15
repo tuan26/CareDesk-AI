@@ -15,6 +15,7 @@ from backend.app.models.models import (
 from backend.app.schemas.schemas import ServicePackageCreate, ServicePackageOut, SellPackageIn
 from backend.app.services.audit import log_action
 from backend.app.services.events import emit_event
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -103,7 +104,7 @@ def sell_package(
         package_id=pkg.id,
         sessions_total=pkg.total_sessions,
         amount_paid=pkg.price,
-        expires_at=datetime.now() + timedelta(days=pkg.validity_days or 180)
+        expires_at=clock.now() + timedelta(days=pkg.validity_days or 180)
     )
     db.add(pp)
     db.flush()

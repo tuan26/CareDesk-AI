@@ -16,6 +16,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from backend.app.models.models import Appointment
+from backend.app.core import clock
 
 #: How long a patient gets to come back before the cohort is judged. Chosen to
 #: match the 30-day recall automation plus room for the appointment itself to be
@@ -57,7 +58,7 @@ def return_rate(db: Session, clinic_id: Optional[int],
     Counts completed visits only. A booking that was never attended says nothing
     about whether the patient came back.
     """
-    now = now or datetime.now()
+    now = now or clock.now()
     cohort_end = now - timedelta(days=window_days)
     cohort_start = cohort_end - timedelta(days=cohort_days)
 

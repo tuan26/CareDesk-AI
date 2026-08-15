@@ -16,6 +16,7 @@ from backend.app.core.booking_rules import (
 )
 from backend.app.models.models import Payment, Appointment, Clinic
 from backend.app.services.events import emit_event
+from backend.app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def hold_for_deposit(db: Session, appointment: Appointment,
         return None, None
 
     appointment.status = STATUS_AWAITING_DEPOSIT
-    appointment.hold_expires_at = datetime.now() + timedelta(
+    appointment.hold_expires_at = clock.now() + timedelta(
         minutes=settings.DEPOSIT_HOLD_MINUTES
     )
     payment = create_deposit_payment(db, appointment, amount)
@@ -78,7 +79,7 @@ def release_expired_holds(db: Session) -> int:
     Emits appointment_cancelled so the waitlist automation gets its chance at
     the freed slot — the same path a real cancellation takes.
     """
-    now = datetime.now()
+    now = clock.now()
     stale = db.query(Appointment).filter(
         Appointment.status == STATUS_AWAITING_DEPOSIT,
         Appointment.hold_expires_at != None,       # noqa: E711
@@ -104,7 +105,7 @@ def mark_paid(db: Session, payment: Payment, provider_ref: Optional[str] = None)
     if payment.status == "paid":
         return
     payment.status = "paid"
-    payment.paid_at = datetime.now()
+    payment.paid_at = clock.now()
     payment.provider_ref = provider_ref or f"MOCK-{payment.id}"
 
     if payment.purpose == "deposit" and payment.appointment_id:

@@ -33,6 +33,7 @@ from backend.app.services.i18n import (
     ui_text, weekday_names,
 )
 from backend.app.services.rate_limit import landing_rate_limiter
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -212,7 +213,7 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
 
     service = next((s for s in brand.services if str(s.id) == str(service_id)), None)
 
-    today = date.today()
+    today = clock.today()
     days = [today + timedelta(days=i) for i in range(_MAX_DAYS_AHEAD)]
 
     chosen_day = None
@@ -335,7 +336,7 @@ def booking_form(slug: str, request: Request, db: Session = Depends(get_db),
             # declared key from defaults, so a template never sees a blank.
             "c": lambda key: brand.content.get(key),
             "weekdays": weekday_names(locale),
-            "today": date.today(),
+            "today": clock.today(),
             "error": err,
             "done": bool(done),
             "when": when,
@@ -401,7 +402,7 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
 
     patient = PatientLead(
         clinic_id=clinic_id, full_name=full_name, phone=phone, source="web_form",
-        consent_given=True, consent_timestamp=datetime.now(),
+        consent_given=True, consent_timestamp=clock.now(),
     )
     # Stamp the campaign that brought them, read from the cookie set on their
     # first page view — which may have been weeks and several visits ago.

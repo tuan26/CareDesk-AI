@@ -22,6 +22,7 @@ from backend.app.api.deps import verify_owner
 from backend.app.core.database import get_db
 from backend.app.models.models import Branch, Clinic, Doctor, Service, User, WorkingSchedule
 from backend.app.services.audit import log_action
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -110,7 +111,7 @@ def save_baseline(
     clinic.baseline_no_show_percent = body.no_show_percent
     clinic.baseline_daily_price_asks = body.daily_price_asks
     clinic.baseline_return_percent = body.return_percent
-    clinic.baseline_captured_at = datetime.now()
+    clinic.baseline_captured_at = clock.now()
     log_action(db, current_user.id, "save_baseline",
                f"Mốc so sánh: {body.monthly_bookings} lịch/tháng, "
                f"{body.no_show_percent}% không đến")
@@ -139,7 +140,7 @@ def complete_onboarding(
                    + ", ".join(s["title"] for s in missing),
         )
 
-    clinic.onboarding_completed_at = datetime.now()
+    clinic.onboarding_completed_at = clock.now()
     clinic.landing_enabled = True
     log_action(db, current_user.id, "complete_onboarding", "Hoàn tất thiết lập, mở link công khai")
     db.commit()

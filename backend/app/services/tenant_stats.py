@@ -10,10 +10,11 @@ from backend.app.core.roles import ROLE_OWNER
 from backend.app.models.models import (
     Clinic, PatientLead, Appointment, Conversation, RevenueRecord, User
 )
+from backend.app.core import clock
 
 
 def _month_start(now: Optional[datetime] = None) -> datetime:
-    now = now or datetime.now()
+    now = now or clock.now()
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 

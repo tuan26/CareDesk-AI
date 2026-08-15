@@ -17,6 +17,7 @@ from backend.app.models.models import (
     DomainEvent, AutomationRule, ScheduledAction, PatientLead, Conversation,
     Message, Appointment, Service, ReviewRequest, WaitlistEntry, PatientPackage, Clinic
 )
+from backend.app.core import clock
 
 
 def emit_event(db: Session, clinic_id: Optional[int], event_type: str,
@@ -120,7 +121,7 @@ def process_new_events(db: Session):
                 clinic_id=event.clinic_id,
                 rule_id=rule.id,
                 patient_id=event.patient_id,
-                due_at=datetime.now() + timedelta(minutes=rule.delay_minutes or 0),
+                due_at=clock.now() + timedelta(minutes=rule.delay_minutes or 0),
                 payload=event.payload or {}
             ))
 
@@ -135,7 +136,7 @@ def run_recurring_rules(db: Session):
         AutomationRule.trigger_type == "recurring",
         AutomationRule.enabled == True  # noqa: E712
     ).all()
-    now = datetime.now()
+    now = clock.now()
 
     for rule in rules:
         cond = rule.condition or {}
@@ -195,7 +196,7 @@ def run_recurring_rules(db: Session):
 def dispatch_due_actions(db: Session):
     due = db.query(ScheduledAction).filter(
         ScheduledAction.status == "pending",
-        ScheduledAction.due_at <= datetime.now()
+        ScheduledAction.due_at <= clock.now()
     ).limit(100).all()
 
     sent = 0
@@ -232,7 +233,7 @@ def dispatch_due_actions(db: Session):
             print(f"[AUTOMATION ERROR] action #{action.id}: {e}")
             action.status = "failed"
 
-        action.executed_at = datetime.now()
+        action.executed_at = clock.now()
         sent += 1
     db.commit()
     return sent
@@ -261,7 +262,7 @@ def _notify_waitlist(db: Session, action: ScheduledAction) -> bool:
                 f"Nhắn 'đặt lịch {service_name} ngày {payload.get('date', '')} lúc {payload.get('slot', '')}' để em giữ chỗ ngay nhé — ai xác nhận trước được trước ạ!")
         deliver_to_patient(db, entry.patient, text)
         entry.status = "notified"
-        entry.notified_at = datetime.now()
+        entry.notified_at = clock.now()
     return True
 
 

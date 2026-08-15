@@ -24,6 +24,7 @@ from backend.app.models.models import (
 )
 from backend.app.services import site_content
 from backend.app.services.audit import log_action
+from backend.app.core import clock
 
 router = APIRouter()
 
@@ -147,7 +148,7 @@ def set_photo_consent(photo_id: int, body: PhotoConsentIn,
     photo = _get_photo(db, photo_id, current_user)
 
     if body.consent_given:
-        photo.consent_given_at = datetime.now()
+        photo.consent_given_at = clock.now()
         photo.consent_by = current_user.id
         photo.consent_note = body.note
         action = "Ghi nhận đồng ý đăng ảnh"
@@ -242,7 +243,7 @@ def publish_review(review_id: int, body: PublishReviewIn,
                             detail="Đánh giá này chưa có nội dung để hiển thị.")
 
     review.is_published = body.is_published
-    review.published_at = datetime.now() if body.is_published else None
+    review.published_at = clock.now() if body.is_published else None
     if body.public_name is not None:
         review.public_name = body.public_name
 

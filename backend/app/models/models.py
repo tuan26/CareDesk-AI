@@ -4,6 +4,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from backend.app.core import clock
 from backend.app.core.database import Base
 
 class User(Base):
@@ -22,7 +23,7 @@ class User(Base):
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)  # link account -> doctor (copilot personalization)
     is_platform_admin = Column(Boolean, default=False)  # vendor/publisher super-admin (cross-tenant)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     audit_logs = relationship("AuditLog", back_populates="user")
 
@@ -51,7 +52,7 @@ class SlugRegistry(Base):
     entity_type = Column(String, nullable=False, index=True)  # organization | clinic | branch | reserved
     entity_id = Column(Integer, nullable=True, index=True)    # NULL for reserved words
     is_active = Column(Boolean, default=True, nullable=False)  # False = superseded, 301 only
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
 
 class Organization(Base):
@@ -63,7 +64,7 @@ class Organization(Base):
     slug = Column(String, unique=True, index=True, nullable=True)  # public link /g/<slug>
     landing_enabled = Column(Boolean, default=True, nullable=False)  # chain landing page at /book/<slug>
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     clinics = relationship("Clinic", back_populates="organization")
 
@@ -79,7 +80,7 @@ class Plan(Base):
     price = Column(Float, default=0.0)  # đồng / month
     trial_days = Column(Integer, default=0)  # free trial length; 0 = none
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
 
 class Clinic(Base):
@@ -126,7 +127,7 @@ class Clinic(Base):
     baseline_return_percent = Column(Float, nullable=True)
     baseline_captured_at = Column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     organization = relationship("Organization", back_populates="clinics")
     plan_ref = relationship("Plan")
@@ -238,7 +239,7 @@ class DoctorTimeOff(Base):
     start_time = Column(Time, nullable=True)
     end_time = Column(Time, nullable=True)
     reason = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     doctor = relationship("Doctor")
 
@@ -296,7 +297,7 @@ class PatientLead(Base):
     tags = Column(JSON, nullable=True)  # e.g. ["VIP", "Liệu trình mụn"]
     referral_code = Column(String, index=True, nullable=True)  # this patient's own code to share
     referred_by_patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     appointments = relationship("Appointment", back_populates="patient")
     conversations = relationship("Conversation", back_populates="patient", cascade="all, delete-orphan")
@@ -317,8 +318,8 @@ class Conversation(Base):
     # work at, no matter which one the patient clicked.
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
     booking_state = Column(JSON, nullable=True)  # AI booking flow state machine
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(), onupdate=func.now())
 
     patient = relationship("PatientLead", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
@@ -336,7 +337,7 @@ class PublicChatSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     previous_expires_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
     conversation = relationship("Conversation", back_populates="public_sessions")
@@ -349,7 +350,7 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     sender = Column(String, nullable=False)  # patient | bot | agent
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     evaluation_metadata = Column(JSON, nullable=True)  # metadata for testing/evaluating quality
 
     conversation = relationship("Conversation", back_populates="messages")
@@ -392,7 +393,7 @@ class Appointment(Base):
     note = Column(Text, nullable=True)
     booking_source = Column(String, default="staff")  # staff | ai_chat | ai_followup | campaign | referral
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     patient = relationship("PatientLead", back_populates="appointments")
     service = relationship("Service", back_populates="appointments")
@@ -432,8 +433,8 @@ class VisitRecord(Base):
     next_visit_days = Column(Integer, nullable=True)
 
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(), onupdate=func.now())
 
     photos = relationship("VisitPhoto", back_populates="visit",
                           cascade="all, delete-orphan")
@@ -468,7 +469,7 @@ class VisitPhoto(Base):
     size_bytes = Column(Integer, nullable=True)
     caption = Column(String, nullable=True)
     uploaded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     # --- Publishing to the public site ---------------------------------
     # Three separate facts, deliberately not collapsed into one flag:
@@ -513,7 +514,7 @@ class BookingRequest(Base):
     contact_value = Column(String, nullable=False)
     note = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="requested", index=True)  # requested | contacted | converted | cancelled
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     service = relationship("Service")
     patient = relationship("PatientLead")
@@ -540,7 +541,7 @@ class ChannelIntegration(Base):
     access_token = Column(String, nullable=True)  # Zalo OA access token / FB Page access token
     verify_token = Column(String, nullable=True)  # webhook verification token
     extra_config = Column(JSON, nullable=True)  # e.g. {"zns_template_id": "..."}
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(), onupdate=func.now())
 
 
 class ReminderLog(Base):
@@ -566,8 +567,8 @@ class ReminderLog(Base):
     status = Column(String, nullable=False, default="sent")  # sent | failed
     attempts = Column(Integer, nullable=False, default=1)
     last_error = Column(Text, nullable=True)
-    sent_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    sent_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(), onupdate=func.now())
 
 
 # ============ REVENUE ENGINE ============
@@ -582,7 +583,7 @@ class DomainEvent(Base):
     patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="CASCADE"), nullable=True, index=True)
     payload = Column(JSON, nullable=True)
     processed = Column(Boolean, default=False, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
 
 class AutomationRule(Base):
@@ -601,7 +602,7 @@ class AutomationRule(Base):
     cancel_on_events = Column(JSON, nullable=True)  # e.g. ["appointment_created"]
     enabled = Column(Boolean, default=True)
     is_system = Column(Boolean, default=False)  # seeded defaults
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
 
 class ScheduledAction(Base):
@@ -614,7 +615,7 @@ class ScheduledAction(Base):
     due_at = Column(DateTime(timezone=True), nullable=False, index=True)
     status = Column(String, default="pending", index=True)  # pending | sent | cancelled | failed
     payload = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     executed_at = Column(DateTime(timezone=True), nullable=True)
 
 
@@ -629,7 +630,7 @@ class RevenueRecord(Base):
     patient_package_id = Column(Integer, ForeignKey("patient_packages.id", ondelete="SET NULL"), nullable=True)
     amount = Column(Float, nullable=False, default=0.0)
     source = Column(String, default="staff")  # staff | ai_chat | ai_followup | campaign | referral | package
-    recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+    recorded_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
 
 class ServicePackage(Base):
@@ -659,7 +660,7 @@ class PatientPackage(Base):
     sessions_used = Column(Integer, default=0)
     amount_paid = Column(Float, default=0.0)
     status = Column(String, default="active")  # active | used_up | expired
-    purchased_at = Column(DateTime(timezone=True), server_default=func.now())
+    purchased_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)
 
     package = relationship("ServicePackage")
@@ -679,7 +680,7 @@ class Payment(Base):
     method = Column(String, default="mock_qr")  # mock_qr | vnpay | momo
     status = Column(String, default="pending", index=True)  # pending | paid | refunded | cancelled
     provider_ref = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     paid_at = Column(DateTime(timezone=True), nullable=True)
 
 
@@ -693,7 +694,7 @@ class WaitlistEntry(Base):
     service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=True)
     preferred_date = Column(String, nullable=True)  # ISO date or NULL = any
     status = Column(String, default="waiting", index=True)  # waiting | notified | fulfilled | cancelled
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     notified_at = Column(DateTime(timezone=True), nullable=True)
 
     patient = relationship("PatientLead")
@@ -723,7 +724,7 @@ class SiteContent(Base):
                        nullable=False, index=True)
     key = Column(String, nullable=False, index=True)
     value = Column(JSON, nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(),
                         onupdate=func.now())
     updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
@@ -739,7 +740,7 @@ class ReviewRequest(Base):
     status = Column(String, default="pending", index=True)  # pending | answered | escalated
     rating = Column(Integer, nullable=True)  # 1-5
     feedback = Column(Text, nullable=True)
-    sent_at = Column(DateTime(timezone=True), server_default=func.now())
+    sent_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     answered_at = Column(DateTime(timezone=True), nullable=True)
 
     # Publishing a review is the clinic's decision, one at a time. Never
@@ -757,7 +758,7 @@ class AuditLog(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     action = Column(String, nullable=False)  # e.g. "create_appointment"
     details = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     user = relationship("User", back_populates="audit_logs")
 
@@ -778,5 +779,5 @@ class FeatureFlag(Base):
                        nullable=True, index=True)
     key = Column(String, nullable=False, index=True)
     enabled = Column(Boolean, nullable=False, default=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+    updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(),
                         onupdate=func.now())
