@@ -41,13 +41,40 @@ _CANCEL_SOURCE = [
     "cancel", "キャンセル",
 ]
 
+#: "Yes" to a question the assistant just asked.
+#:
+#: Deliberately excludes "có" and "dạ". They are the two most common words in a
+#: Vietnamese question — "có đau không", "dạ cho em hỏi" — so counting them as
+#: consent reads half of all questions as agreement, which is precisely how
+#: "Làm xong có phải kiêng nắng không?" got answered with "ngày nào ạ?".
+_AFFIRMATIVE = re.compile(
+    r"\b(ok|oke|okie|okay|vang|dung roi|duoc|yes|sure|はい|お願い)\b"
+)
+
+#: An affirmative is a whole reply, not a word inside a sentence. "Được không
+#: ạ, em hỏi thêm chút" contains "được" and agrees to nothing.
+_AFFIRMATIVE_MAX_WORDS = 4
+
+
+def _doctor_label(name: str) -> str:
+    """"bác sĩ {name}" reads as "bác sĩ Bác sĩ Nguyễn Văn A" whenever the clinic
+    typed the title into the name field — which most of them do."""
+    return name if strip_accents(name).startswith(("bac si", "bs", "ts", "pgs")) \
+        else f"bác sĩ {name}"
+
+
+def _is_affirmative(text_folded: str) -> bool:
+    return (len(text_folded.split()) <= _AFFIRMATIVE_MAX_WORDS
+            and bool(_AFFIRMATIVE.search(text_folded)))
+
 # Folded once at import; user text is folded per message.
 BOOKING_INTENT_KEYWORDS = [strip_accents(k) for k in _BOOKING_INTENT_SOURCE]
 CANCEL_KEYWORDS = [strip_accents(k) for k in _CANCEL_SOURCE]
-FAQ_KEYWORDS = [
-    "giá", "bao nhiêu", "phí", "địa chỉ", "ở đâu", "mấy giờ", "mở cửa", "chi nhánh",
-    "price", "cost", "address", "hours", "location", "料金", "住所", "営業時間",
-]
+
+# FAQ_KEYWORDS used to decide which mid-flow questions deserved a real answer.
+# It was the wrong test — it only listed price and address wording, so "có đau
+# không" and "bao lâu thì khỏi" were treated as booking input. Absence of
+# booking data replaced it; see handle_booking.
 
 
 from backend.app.services.i18n import say as _say
@@ -310,9 +337,29 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     new_phone = _parse_phone(user_message)
     new_name = _parse_name(user_message)
 
-    # Mid-flow FAQ question with no new booking info -> let FAQ engine answer, keep state
-    if state.get("active") and not has_intent and not any([new_service, new_date, new_time, new_phone, new_name]) \
-            and any(kw in text_lower for kw in FAQ_KEYWORDS):
+    # A message that carries no booking information is not advancing the
+    # booking, whatever else it is — so the assistant should answer it instead of
+    # replying with the next form field.
+    #
+    # This used to require a word from FAQ_KEYWORDS, which meant "Laser CO2 có
+    # đau không?" and "bao lâu thì hết mụn?" were swallowed by the state machine
+    # and answered with "bạn muốn khám ngày nào ạ?". Absence of booking data is
+    # the reliable signal; a list of question words never will be.
+    #
+    # Only once the flow has actually collected something. On the turn it is
+    # first activated there is nothing to fall back to, and bailing out would
+    # leave the patient with whatever the model happened to say and no question
+    # to answer.
+    mid_flow = any(state.get(k) for k in
+                   ("service_id", "date", "slot", "proposed_slots", "full_name", "phone"))
+    # Naming the service already chosen adds nothing — "Laser CO2 có đau không?"
+    # is a question about the booking in progress, not an answer to it. Only a
+    # *different* service is new information.
+    adds_new = bool(new_date or new_time or new_phone or new_name
+                    or (new_service and new_service.id != state.get("service_id")))
+    if state.get("active") and mid_flow and not has_intent and not adds_new \
+            and not _is_affirmative(text_folded) \
+            and not (state.get("proposed_slots") and re.fullmatch(r"\s*\d\s*\.?\s*", user_message)):
         return None
 
     if not state.get("active"):
@@ -392,17 +439,20 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
             missing.append("Số điện thoại")
         conv.booking_state = state
         db.commit()
-        return (f"Dạ, tôi đã ghi nhận thông tin bạn muốn đặt lịch dịch vụ {service.name}. "
-                f"Bạn vui lòng cung cấp giúp tôi: {', '.join(missing)} để hoàn tất đăng ký nhé ạ.")
+        # Not "đã ghi nhận": nothing is saved until every field is in and the
+        # BookingRequest is written. A patient told their booking is recorded
+        # stops answering, and the request dies half-collected.
+        return (f"Dạ, để đặt lịch dịch vụ {service.name}, "
+                f"bạn cho tôi xin: {', '.join(missing)} nhé ạ.")
 
     if not state.get("date"):
         conv.booking_state = state
         db.commit()
-        return (f"Dạ, tôi đã ghi nhận thông tin đặt lịch:\n"
+        return (f"Dạ, tôi đang chuẩn bị yêu cầu đặt lịch cho bạn:\n"
                 f"- Họ tên: {state['full_name']}\n"
                 f"- Số điện thoại: {state['phone']}\n"
                 f"- Dịch vụ: {service.name}\n"
-                f"Bạn muốn đặt lịch vào ngày nào ạ? (ví dụ: ngày mai, thứ 7, hoặc 25/07)")
+                f"Bạn muốn khám vào ngày nào ạ? (ví dụ: ngày mai, thứ 7, hoặc 25/07)")
 
     target_date = date.fromisoformat(state["date"])
     if target_date < date.today():
@@ -452,7 +502,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         conv.booking_state = state
         db.commit()
         numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(top))
-        return (f"Dạ, {_fmt_date(state['date'], locale)} bác sĩ {doctor.name} còn các khung giờ trống:\n{numbered}\n"
+        return (f"Dạ, {_fmt_date(state['date'], locale)} {_doctor_label(doctor.name)} còn các khung giờ trống:\n{numbered}\n"
                 f"Bạn vui lòng chọn một khung giờ (nhắn số 1/2/3 hoặc giờ cụ thể) nhé ạ.")
 
         

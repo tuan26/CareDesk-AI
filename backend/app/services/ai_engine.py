@@ -523,6 +523,46 @@ def handle_review_reply(db: Session, conv: Conversation, user_message: str) -> O
             "Bạn có thể chia sẻ thêm điều gì khiến bạn chưa hài lòng không ạ?")
 
 
+def _really_booked(db: Session, conv: Conversation) -> bool:
+    from backend.app.models.models import BookingRequest
+
+    return db.query(BookingRequest).filter(
+        BookingRequest.conversation_id == conv.id,
+        BookingRequest.status != "cancelled",
+    ).first() is not None
+
+
+def _reject_false_booking_claim(db: Session, conv: Conversation, text: str,
+                                locale: str) -> str:
+    """Never tell a patient they are booked when they are not.
+
+    Checked against the database, not trusted. A patient told "đã ghi nhận" stops
+    looking, turns up on the day, and nobody at the clinic knows they are coming
+    — the most expensive sentence the product can produce.
+
+    Applied to every outbound message, not only the model's. The rule-based
+    booking flow said exactly this while it was still collecting a date, and it
+    returned before the old check ever ran — so the one message guaranteed to
+    make the claim was the one message never inspected.
+    """
+    if not any(p in text.lower() for p in BOOKING_CLAIM_PHRASES):
+        return text
+    if _really_booked(db, conv):
+        return text
+
+    logger.error("Tin nhắn khẳng định đã đặt lịch trong hội thoại %s nhưng chưa "
+                 "có BookingRequest nào. Đã thay bằng chuyển lễ tân.", conv.id)
+    return _say(
+        locale,
+        "Xin lỗi bạn, em chưa gửi được yêu cầu đặt lịch. "
+        "Em chuyển thông tin của bạn cho lễ tân để gọi lại xác nhận nhé.",
+        "Sorry — I have not been able to submit a booking request. "
+        "I am passing your details to our receptionist to call you back.",
+        "申し訳ありません。予約リクエストを送信できませんでした。"
+        "受付担当より折り返しご連絡いたします。",
+    )
+
+
 def process_chat_message(db: Session, conversation_id: int, user_message: str) -> Tuple[str, bool]:
     """
     Process an incoming message from the patient.
@@ -598,6 +638,8 @@ def process_chat_message(db: Session, conversation_id: int, user_message: str) -
     from backend.app.services.booking_flow import handle_booking
     booking_response = handle_booking(db, conv, user_message)
     if booking_response:
+        booking_response = _reject_false_booking_claim(
+            db, conv, booking_response, locale_for_conversation(conv, None))
         bot_msg = Message(
             conversation_id=conversation_id, sender="bot", content=booking_response,
             evaluation_metadata={"booking_flow": True}
@@ -647,6 +689,9 @@ Quy tắc hoạt động bắt buộc:
    "phòng khám sẽ liên hệ xác nhận" — nói vậy là nói dối khách, vì thực tế chưa có gì được lưu lại.
    Khi khách muốn đặt lịch, hãy kết thúc câu trả lời bằng đúng ký hiệu này ở dòng cuối: {BOOKING_TOKEN}
    Hệ thống sẽ gỡ ký hiệu đi và tự chuyển sang quy trình đặt lịch thật.
+   CHỈ dùng ký hiệu này khi khách thực sự tỏ ý muốn đặt/hẹn/đăng ký khám.
+   Khách hỏi thông tin — giá, thời gian, có đau không, bao lâu, ai làm — thì
+   TRẢ LỜI CÂU HỎI ĐÓ, không dùng ký hiệu. Hỏi giá không phải là muốn đặt lịch.
 5. ALWAYS answer in the patient's locale: {locale} (vi=Vietnamese, en=English, ja=Japanese).
 6. CHUYỂN NGƯỜI THẬT: nếu bạn không chắc chắn, hoặc câu hỏi nằm ngoài dữ liệu được cung cấp,
    hoặc khách hỏi về chuyên môn y khoa/tình trạng bệnh, hoặc khách tỏ ra không hài lòng —
@@ -699,17 +744,27 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
     # the rule-based flow, which is the only thing that can actually create a
     # BookingRequest. This catches the phrasings no keyword list will predict.
     if BOOKING_TOKEN in ai_response:
-        ai_response = ai_response.replace(BOOKING_TOKEN, "").strip()
+        answer = ai_response.replace(BOOKING_TOKEN, "").strip()
         conv.booking_state = {**(conv.booking_state or {}), "active": True}
         db.commit()
         booking_response = handle_booking(db, conv, user_message)
         if booking_response:
+            # Answer first, then book. Replacing the reply wholesale meant
+            # "Laser CO2 có đau không?" was met with "bạn muốn đặt ngày nào?" —
+            # the question ignored, and the patient pushed towards a booking
+            # they had not asked for. The model raises this token generously,
+            # so treating it as "also offer to book" rather than "abandon the
+            # conversation" is what keeps the answer honest either way.
+            merged = f"{answer}\n\n{booking_response}" if answer else booking_response
+            merged = _reject_false_booking_claim(db, conv, merged, locale)
             db.add(Message(conversation_id=conversation_id, sender="bot",
-                           content=booking_response,
+                           content=merged,
                            evaluation_metadata={"booking_flow": True,
-                                                "entered_via": "model_token"}))
+                                                "entered_via": "model_token",
+                                                "answered_first": bool(answer)}))
             db.commit()
-            return booking_response, False
+            return merged, False
+        ai_response = answer
 
     # 6c. Never let the model tell a patient they are booked when they are not.
     #
@@ -717,30 +772,11 @@ BỐI CẢNH DỮ LIỆU PHÒNG KHÁM (RAG):
     # thông tin đặt lịch" is pure invention — and the most expensive kind: the
     # patient stops looking, turns up on the day, and nobody at the clinic knows
     # they are coming. Verified against the database rather than trusted.
-    if any(p in ai_response.lower() for p in BOOKING_CLAIM_PHRASES):
-        from backend.app.models.models import BookingRequest
-
-        really_booked = db.query(BookingRequest).filter(
-            BookingRequest.conversation_id == conv.id,
-            BookingRequest.status != "cancelled",
-        ).first() is not None
-
-        if not really_booked:
-            logger.error(
-                "AI bịa việc đã đặt lịch trong hội thoại %s — không có "
-                "BookingRequest nào. Đã thay bằng chuyển lễ tân.", conv.id,
-            )
-            evaluation_meta["fabricated_booking_claim"] = True
-            ai_response = _say(
-                locale,
-                "Xin lỗi bạn, em chưa gửi được yêu cầu đặt lịch. "
-                "Em chuyển thông tin của bạn cho lễ tân để gọi lại xác nhận nhé.",
-                "Sorry — I have not been able to submit a booking request. "
-                "I am passing your details to our receptionist to call you back.",
-                "申し訳ありません。予約リクエストを送信できませんでした。"
-                "受付担当より折り返しご連絡いたします。",
-            )
-            degraded = True   # force the handoff below
+    checked = _reject_false_booking_claim(db, conv, ai_response, locale)
+    if checked != ai_response:
+        ai_response = checked
+        evaluation_meta["fabricated_booking_claim"] = True
+        degraded = True   # force the handoff below
 
     # 7. Decide whether a human is needed.
     is_handoff = False
