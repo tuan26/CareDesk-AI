@@ -149,8 +149,13 @@ export default function DoctorsPage() {
 
   const handleSubmitSchedule = async (e) => {
     e.preventDefault();
+    // "Sai giờ" is not what the clinic entering a night shift needs to hear —
+    // they need to know the shift is allowed, just entered as two rows.
     if (scheduleForm.start_time >= scheduleForm.end_time) {
-      alert('Giờ bắt đầu phải nhỏ hơn giờ kết thúc.');
+      alert('Giờ kết thúc phải sau giờ bắt đầu.\n\n'
+        + 'Phòng khám mở buổi tối: thêm ca 18:00 – 22:00 bình thường.\n'
+        + 'Ca qua đêm: tách làm hai ca, ví dụ 22:00 – 23:59 hôm nay '
+        + 'và 00:00 – 02:00 hôm sau.');
       return;
     }
     const payload = {
@@ -547,6 +552,14 @@ export default function DoctorsPage() {
                     />
                   </div>
                 </div>
+                {/* The mechanism is not obvious: one doctor can have several
+                    shifts on the same weekday, and that is how a clinic opens
+                    evenings without extending the day shift. */}
+                <p style={{ fontSize: 13, color: '#64748b', marginTop: 12, lineHeight: 1.55 }}>
+                  Một bác sĩ có thể có nhiều ca trong cùng một ngày. Muốn nhận khám
+                  buổi tối, thêm một ca nữa — ví dụ <strong>18:00 – 22:00</strong>.
+                  Giờ mở cửa hiển thị trên trang đặt lịch được tính từ các ca này.
+                </p>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowScheduleModal(false)}>Hủy</button>

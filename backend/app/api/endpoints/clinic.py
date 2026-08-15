@@ -288,6 +288,17 @@ def create_schedule(
     if not branch:
         raise HTTPException(status_code=404, detail="Không tìm thấy chi nhánh")
 
+    # A shift that ends before it starts crosses midnight, and slot generation
+    # walks forwards from start to end — so it produces nothing at all, quietly.
+    # The clinic sees an empty calendar and no reason for it. Splitting the
+    # shift at midnight is the correct entry anyway: an appointment at 01:00
+    # belongs to the following day, not to the evening that ran into it.
+    if schedule_in.end_time <= schedule_in.start_time:
+        raise HTTPException(
+            status_code=400,
+            detail="Giờ kết thúc phải sau giờ bắt đầu. Ca qua đêm cần tách làm hai: "
+                   "ví dụ 22:00–23:59 hôm nay và 00:00–02:00 hôm sau.")
+
     db_sched = WorkingSchedule(**schedule_in.model_dump())
     db.add(db_sched)
     log_action(db, current_user.id, "create_schedule", f"Xếp ca cho bác sĩ #{doc.id}")
