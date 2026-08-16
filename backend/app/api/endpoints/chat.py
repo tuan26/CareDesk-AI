@@ -1,7 +1,8 @@
 from typing import Any, List, Optional
-from datetime import datetime
+from datetime import timedelta
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.api.deps import verify_receptionist_or_above, verify_owner
 from backend.app.models.models import Conversation, Message, PatientLead, User, Clinic, Branch
@@ -17,9 +18,9 @@ from backend.app.services.channel_gateway import reply_to_conversation_channel
 from backend.app.services.public_chat_session import (
     issue_public_chat_session, verify_and_rotate_public_chat_session,
 )
-from backend.app.core.config import settings
 from backend.app.core import clock
 from backend.app.core.handoff import assistant_may_reply
+from backend.app.services.i18n import ui_text
 from backend.app.services.patients import upsert_lead
 
 router = APIRouter()
@@ -31,15 +32,20 @@ def _scoped_conv(query, user: User):
     return query
 
 
-def _authorize_public_conversation(db: Session, conv: Conversation, session_token: Optional[str]) -> Optional[str]:
-    """Validate and rotate the pilot clinic's conversation-bound session."""
-    clinic = db.query(Clinic).filter(Clinic.id == conv.clinic_id).first() if conv.clinic_id else None
-    require_token = settings.PUBLIC_CHAT_REQUIRE_SESSION_TOKEN or bool(clinic and clinic.public_chat_v1_enabled)
-    if not require_token:
-        return None
+def _authorize_public_conversation(db: Session, conv: Conversation, session_token: Optional[str]) -> str:
+    """Validate and rotate the conversation-bound session.
+
+    Always required. This used to be opt-in per clinic, defaulting to off, which
+    meant GET /chat/conversations/31/messages returned a stranger's medical
+    conversation to anyone who counted upwards — no token, no login. Every
+    client already keeps the token issued when the conversation starts (the
+    corner panel, the /chat page and the embeddable widget all send it back), so
+    there was nothing on the other side of that trade.
+    """
     valid, rotated_token = verify_and_rotate_public_chat_session(db, conv.id, session_token)
     if not valid:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Phiên trò chuyện không hợp lệ hoặc đã hết hạn.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Phiên trò chuyện không hợp lệ hoặc đã hết hạn.")
     return rotated_token
 
 
@@ -114,6 +120,13 @@ def start_conversation(
     db.commit()
     db.refresh(conv)
 
+    # The greeting is part of the transcript, not decoration. Every client drew
+    # it locally and none stored it, so reception's inbox opened on the
+    # patient's first question with no idea what they had been greeted with —
+    # and resuming a thread lost it entirely.
+    db.add(Message(conversation_id=conv.id, sender="bot",
+                   content=ui_text(locale, "welcome", name=patient.full_name or "")))
+
     ws_manager.notify(clinic_id, {"type": "conversation_started", "conversation_id": conv.id})
     # Optional field: legacy clients ignore it, V1 widgets retain and rotate it.
     conv.public_session_token = issue_public_chat_session(db, conv.id)
@@ -139,9 +152,8 @@ def send_message(
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
 
-    rotated_token = _authorize_public_conversation(db, conv, x_caredesk_session)
-    if rotated_token:
-        response.headers["X-CareDesk-Session"] = rotated_token
+    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
+        db, conv, x_caredesk_session)
 
     # Save patient message
     patient_msg = Message(
@@ -194,6 +206,61 @@ def send_message(
     return bot_msg
 
 
+@router.get("/conversations/{conv_id}/resume", dependencies=[Depends(chat_rate_limiter)])
+def resume_conversation(
+    response: Response,
+    conv_id: int,
+    db: Session = Depends(get_db),
+    x_caredesk_session: Optional[str] = Header(default=None)
+) -> Any:
+    """Pick a conversation back up where the patient left it.
+
+    Reopening the panel used to start from nothing: the consent form again, the
+    greeting again, and an assistant with no idea what had just been discussed.
+
+    Continuity is keyed on the token this browser holds, not on the phone number
+    typed into the form. A phone number is not a secret — it is printed on
+    receipts and shared in group chats — and resuming on one would let anyone
+    who knows a number read that person's medical conversation. The browser that
+    had the conversation is the one that gets it back.
+
+    Threads older than the cutoff are not resumed. A fortnight-old exchange is
+    not context, it is clutter, and its half-finished booking refers to dates
+    that have since passed.
+    """
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
+
+    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
+        db, conv, x_caredesk_session)
+
+    age = clock.now() - (conv.updated_at or conv.created_at or clock.now())
+    if age > timedelta(hours=settings.PUBLIC_CHAT_RESUME_MAX_AGE_HOURS):
+        raise HTTPException(status_code=status.HTTP_410_GONE,
+                            detail="Cuộc trò chuyện đã quá cũ để tiếp tục.")
+
+    # A booking half-collected days ago points at a date that has passed. Keep
+    # the conversation, drop the stale intent, so the patient is not answered
+    # with "ngày bạn chọn đã qua mất rồi" for a day they never re-chose.
+    state = dict(conv.booking_state or {})
+    if state.get("date") and state["date"] < clock.today().isoformat():
+        for key in ("date", "slot", "proposed_slots"):
+            state.pop(key, None)
+        conv.booking_state = state
+        db.commit()
+
+    messages = db.query(Message).filter(
+        Message.conversation_id == conv.id,
+        Message.sender != "system",
+    ).order_by(Message.id.asc()).all()
+    return {
+        "conversation_id": conv.id,
+        "status": conv.status,
+        "messages": [MessageOut.model_validate(m, from_attributes=True) for m in messages],
+    }
+
+
 @router.get("/conversations/{conv_id}/messages", response_model=List[MessageOut], dependencies=[Depends(chat_rate_limiter)])
 def poll_messages(
     response: Response,
@@ -211,9 +278,8 @@ def poll_messages(
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
 
-    rotated_token = _authorize_public_conversation(db, conv, x_caredesk_session)
-    if rotated_token:
-        response.headers["X-CareDesk-Session"] = rotated_token
+    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
+        db, conv, x_caredesk_session)
     return db.query(Message).filter(
         Message.conversation_id == conv_id,
         Message.id > after_id

@@ -39,6 +39,16 @@ export default function ClinicChatPage() {
   const [err, setErr] = useState('');
   const endRef = useRef(null);
 
+  // Where this browser remembers its own thread. Keyed on the URL so two
+  // clinics on one device do not collide, and it stores the session token —
+  // resuming proves possession rather than knowledge of a phone number, which
+  // is printed on receipts and shared in group chats.
+  const store = `caredesk_chat_${slug || brandSlug || clinicSlug || ''}_${branchSlug || ''}`;
+  const remember = (id, token) => {
+    try { localStorage.setItem(store, JSON.stringify({ id, token })); } catch { /* private mode */ }
+  };
+  const forget = () => { try { localStorage.removeItem(store); } catch { /* ignore */ } };
+
   useEffect(() => {
     (async () => {
       try {
@@ -51,6 +61,28 @@ export default function ClinicChatPage() {
       } catch { setNotFound(true); }
     })();
   }, [resolveUrl]);
+
+  // Reopening should look like coming back to a conversation, not meeting a
+  // stranger who asks for your name again. Silently falls back to the consent
+  // form when there is nothing to resume, or the thread has aged out.
+  useEffect(() => {
+    let prior = null;
+    try { prior = JSON.parse(localStorage.getItem(store) || 'null'); } catch { prior = null; }
+    if (!prior?.id || !prior?.token) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/chat/conversations/${prior.id}/resume`,
+          { headers: { 'X-CareDesk-Session': prior.token } });
+        if (!res.ok) { forget(); return; }
+        const token = res.headers.get('X-CareDesk-Session') || prior.token;
+        const data = await res.json();
+        setSessionToken(token);
+        setConvId(data.conversation_id);
+        setMessages(data.messages.map((m) => ({ sender: m.sender, content: m.content })));
+        remember(data.conversation_id, token);
+      } catch { forget(); }
+    })();
+  }, [store]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -83,6 +115,7 @@ export default function ClinicChatPage() {
       if (!res.ok) throw new Error(data.detail || 'Unable to start the conversation');
       setConvId(data.id);
       setSessionToken(data.public_session_token || null);
+      remember(data.id, data.public_session_token || null);
       setMessages([{ sender: 'bot', content: t('welcome', { name: lead.full_name || t('name'), clinic: clinic.name }) }]);
     } catch (e2) { setErr(e2.message); }
   };
@@ -100,7 +133,9 @@ export default function ClinicChatPage() {
         body: JSON.stringify({ content: text }),
       });
       const data = await res.json();
-      setSessionToken(res.headers.get('X-CareDesk-Session') || sessionToken);
+      const rotated = res.headers.get('X-CareDesk-Session') || sessionToken;
+      setSessionToken(rotated);
+      remember(convId, rotated);
       if (data?.content) setMessages(prev => [...prev, { sender: 'bot', content: data.content }]);
     } catch {
       setMessages(prev => [...prev, { sender: 'bot', content: t('connection') }]);

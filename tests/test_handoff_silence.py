@@ -23,6 +23,7 @@ from backend.app.main import app
 from backend.app.models.models import (
     Clinic, Conversation, Message, PatientLead, Service,
 )
+from backend.app.services.public_chat_session import issue_public_chat_session
 
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
                        poolclass=StaticPool)
@@ -57,13 +58,18 @@ def conv(db):
     db.flush()
     c = Conversation(clinic_id=clinic.id, patient_id=patient.id, status="bot_active")
     db.add(c)
+    db.flush()
+    # Public chat endpoints now always require the conversation-bound token —
+    # they used to hand a stranger's history to anyone who guessed the id.
+    c.public_session_token = issue_public_chat_session(db, c.id)
     db.commit()
     return c
 
 
 def _send(client, conv, text):
     return client.post(f"/api/v1/chat/conversations/{conv.id}/messages",
-                       json={"content": text})
+                       json={"content": text},
+                       headers={"X-CareDesk-Session": conv.public_session_token})
 
 
 def _bot_replies(db, conv):

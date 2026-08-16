@@ -144,7 +144,10 @@ class Settings(BaseSettings):
 
     # Public web-chat credentials. Keep enforcement opt-in while old embedded widgets migrate.
     PUBLIC_CHAT_SESSION_TTL_SECONDS: int = int(os.getenv("PUBLIC_CHAT_SESSION_TTL_SECONDS", str(60 * 60 * 24)))
-    PUBLIC_CHAT_REQUIRE_SESSION_TOKEN: bool = os.getenv("PUBLIC_CHAT_REQUIRE_SESSION_TOKEN", "false").lower() == "true"
+    # How long a browser may pick its own conversation back up. Beyond this a
+    # fortnight-old exchange is clutter rather than context, and its
+    # half-finished booking points at dates that have passed.
+    PUBLIC_CHAT_RESUME_MAX_AGE_HOURS: int = int(os.getenv("PUBLIC_CHAT_RESUME_MAX_AGE_HOURS", "72"))
 
     # Demo/sample data (accounts, demo clinic, demo chain) — on by default in
     # dev so `python -m backend.app.main` stays a one-command demo, off by

@@ -146,6 +146,25 @@
 
   var clinic = null, convId = null, token = null, lastId = 0, poll = null;
 
+  // Where this browser remembers its own thread. Scoped per clinic so two
+  // clinics on one device do not collide, and holding the session token means
+  // resuming proves possession rather than knowledge of a phone number.
+  var STORE = 'caredesk_chat_' + brand + (branchSlug ? '_' + branchSlug : '');
+
+  function remember() {
+    try {
+      localStorage.setItem(STORE, JSON.stringify({ id: convId, token: token }));
+    } catch (e) { /* private mode: the panel still works, it just forgets */ }
+  }
+
+  function forget() {
+    try { localStorage.removeItem(STORE); } catch (e) {}
+  }
+
+  function saved() {
+    try { return JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { return null; }
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -157,7 +176,7 @@
     launcher.hidden = true;
     launcher.setAttribute('aria-expanded', 'true');
     document.body.classList.add('cd-open');
-    if (!clinic) resolve();
+    if (!convId && !clinic) resume();
     var focusable = panel.querySelector('input, button:not(#cd-close)');
     if (focusable) focusable.focus();
   }
@@ -184,6 +203,40 @@
       e.preventDefault();
       open();
     });
+  }
+
+  // Reopening should look like coming back to a conversation, not meeting a
+  // stranger who asks for your name again. Falls through to the consent form
+  // whenever there is nothing to resume, the token has expired, or the thread
+  // is too old to be useful.
+  function resume() {
+    var prior = saved();
+    if (!prior || !prior.id || !prior.token) { resolve(); return; }
+
+    body.innerHTML = '<p class="cd-note">' + esc(t('connecting')) + '</p>';
+    fetch(API + '/chat/conversations/' + prior.id + '/resume',
+          { headers: { 'X-CareDesk-Session': prior.token } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('stale');
+        token = r.headers.get('X-CareDesk-Session') || prior.token;
+        return r.json();
+      })
+      .then(function (data) {
+        convId = data.conversation_id;
+        remember();
+        conversation();
+        for (var i = 0; i < data.messages.length; i++) {
+          var m = data.messages[i];
+          say(m.sender, m.content);
+          if (m.id > lastId) lastId = m.id;
+        }
+        poll = setInterval(pollAgent, 4000);
+      })
+      .catch(function () {
+        forget();
+        convId = null;
+        resolve();
+      });
   }
 
   function resolve() {
@@ -263,7 +316,10 @@
     }).then(function (data) {
       convId = data.id;
       token = data.public_session_token || null;
+      remember();
       conversation();
+      // The greeting is stored server-side now, so it arrives with the thread
+      // rather than being drawn here and lost on the next reload.
       say('bot', t('welcome', { name: name }));
       poll = setInterval(pollAgent, 4000);
     }).catch(function (err) {
@@ -317,6 +373,7 @@
       body: JSON.stringify({ content: text })
     }).then(function (r) {
       token = r.headers.get('X-CareDesk-Session') || token;
+      remember();
       return r.json();
     }).then(function (data) {
       waiting.remove();
@@ -346,6 +403,7 @@
     }).then(function (r) {
       if (!r.ok) throw new Error('poll');
       token = r.headers.get('X-CareDesk-Session') || token;
+      remember();
       return r.json();
     }).then(function (list) {
       for (var i = 0; i < list.length; i++) {
