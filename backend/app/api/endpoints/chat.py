@@ -20,6 +20,7 @@ from backend.app.services.public_chat_session import (
 from backend.app.core.config import settings
 from backend.app.core import clock
 from backend.app.core.handoff import assistant_may_reply
+from backend.app.services.patients import upsert_lead
 
 router = APIRouter()
 
@@ -69,42 +70,25 @@ def start_conversation(
     locale = lead_in.locale if lead_in.locale in {"vi", "ja", "en"} else clinic.default_locale
 
 
-    # Check if patient lead already exists by phone (within the clinic)
-    patient = None
-    if lead_in.phone:
-        patient = db.query(PatientLead).filter(
-            PatientLead.phone == lead_in.phone,
-            PatientLead.clinic_id == clinic_id
+    # Referral tracking: resolve the friend's code to the referring patient.
+    # Only meaningful for someone new — an existing patient already has a source.
+    referred_by = None
+    if lead_in.referral_code_used:
+        referrer = db.query(PatientLead).filter(
+            PatientLead.clinic_id == clinic_id,
+            PatientLead.referral_code == lead_in.referral_code_used.strip().upper()
         ).first()
+        referred_by = referrer.id if referrer else None
 
-    if not patient:
-        # Referral tracking: resolve the friend's code to the referring patient
-        referred_by = None
-        if lead_in.referral_code_used:
-            referrer = db.query(PatientLead).filter(
-                PatientLead.clinic_id == clinic_id,
-                PatientLead.referral_code == lead_in.referral_code_used.strip().upper()
-            ).first()
-            referred_by = referrer.id if referrer else None
-
-        patient = PatientLead(
-            clinic_id=clinic_id,
-            full_name=lead_in.full_name,
-            phone=lead_in.phone,
-            email=lead_in.email,
-            source=lead_in.source,
-            referred_by_patient_id=referred_by,
-            consent_given=True,
-            consent_timestamp=clock.now()
-        )
-        db.add(patient)
-        db.commit()
-        db.refresh(patient)
-    else:
-        # Update consent
-        patient.consent_given = True
-        patient.consent_timestamp = clock.now()
-        db.commit()
+    # One record per phone, and the name they just gave wins over the one stored
+    # from a previous visit. See services/patients.py.
+    patient = upsert_lead(
+        db, clinic_id, full_name=lead_in.full_name, phone=lead_in.phone,
+        source=lead_in.source, email=lead_in.email,
+        referred_by_patient_id=referred_by,
+    )
+    db.commit()
+    db.refresh(patient)
 
     # Pin the location the patient arrived from, so the booking flow proposes
     # slots at that branch instead of the first doctor it happens to find.

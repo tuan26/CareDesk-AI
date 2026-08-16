@@ -32,6 +32,7 @@ from backend.app.services.i18n import (
     SUPPORTED_LOCALES, UI_TEXT, landing_text, normalize_locale, service_content,
     ui_text, weekday_names,
 )
+from backend.app.services.patients import upsert_lead
 from backend.app.services.rate_limit import landing_rate_limiter
 from backend.app.core import clock
 
@@ -400,14 +401,16 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
     if slot not in {s.strftime("%H:%M") for s, _ in free}:
         return _back("Khung giờ vừa chọn không còn trống. Vui lòng chọn giờ khác.")
 
-    patient = PatientLead(
-        clinic_id=clinic_id, full_name=full_name, phone=phone, source="web_form",
-        consent_given=True, consent_timestamp=clock.now(),
-    )
+    # One record per phone, same as the chat. This form used to create a new
+    # patient on every submission, so booking twice from the website produced
+    # two CRM rows for one person — with split history and split attribution.
+    patient = upsert_lead(db, clinic_id, full_name=full_name, phone=phone,
+                          source="web_form")
     # Stamp the campaign that brought them, read from the cookie set on their
     # first page view — which may have been weeks and several visits ago.
+    # apply_to_lead only fills first-touch fields when blank, so a returning
+    # patient keeps the campaign that originally found them.
     attribution.apply_to_lead(patient, attribution.read_cookie(request))
-    db.add(patient)
     db.flush()
     # The branch is a column now, not a suffix on the time string: reception
     # filters and assigns by location, which no amount of free text supports.

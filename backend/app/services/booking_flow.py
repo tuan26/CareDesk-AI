@@ -267,14 +267,47 @@ def days_with_availability(db: Session, clinic_id: Optional[int], start: date,
     ]
 
 
+def _resolve_doctor(db: Session, clinic_id: Optional[int], text: str) -> Optional[Doctor]:
+    """Which doctor the patient named, if any.
+
+    Matched on the full name, accent-folded on both sides so "bac si le thi b"
+    finds "Bác sĩ Lê Thị B". Deliberately not on single tokens: half the doctors
+    in a Vietnamese clinic share a surname, and "chị B" is not enough to book
+    someone's afternoon on.
+    """
+    query = db.query(Doctor).filter(Doctor.is_active == True)  # noqa: E712
+    if clinic_id:
+        query = query.filter(Doctor.clinic_id == clinic_id)
+
+    folded = strip_accents(text)
+    best = None
+    for doctor in query.all():
+        name = strip_accents(doctor.name)
+        # Also try without the title, so "Lê Thị B" matches "Bác sĩ Lê Thị B".
+        bare = re.sub(r"^(bac si|bs\.?|ts\.?|pgs\.?|ths\.?)\s+", "", name).strip()
+        for candidate in (name, bare):
+            if len(candidate) >= 4 and candidate in folded:
+                # Longest match wins: "Le Thi B" must not lose to a shorter name
+                # that happens to be a substring of it.
+                if best is None or len(candidate) > best[1]:
+                    best = (doctor, len(candidate))
+    return best[0] if best else None
+
+
 def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: date,
-                           duration: int, branch_id: Optional[int] = None):
+                           duration: int, branch_id: Optional[int] = None,
+                           doctor_id: Optional[int] = None):
     """Find an active doctor with free slots on the date. Returns (doctor, branch, slots).
 
     `branch_id` pins the search to the location the patient actually chose. Left
     unset this scans every doctor in the clinic and returns the first with a free
     slot, which is why a patient who clicked "Cơ sở Bạch Mai" used to be booked
     into whatever branch the first available doctor worked at.
+
+    `doctor_id` does the same for the person. A patient who asks for Bác sĩ B and
+    is quietly given Bác sĩ A finds out in the waiting room, and the clinic finds
+    out from the complaint. When the requested doctor has nothing free this
+    returns no slots rather than substituting someone else — the caller says so.
     """
     from backend.app.services.ai_engine import get_available_slots
 
@@ -282,6 +315,8 @@ def _pick_doctor_and_slots(db: Session, clinic_id: Optional[int], target_date: d
     query = db.query(Doctor).filter(Doctor.is_active == True)  # noqa: E712
     if clinic_id:
         query = query.filter(Doctor.clinic_id == clinic_id)
+    if doctor_id:
+        query = query.filter(Doctor.id == doctor_id)
     for doctor in query.all():
         schedules = db.query(WorkingSchedule).filter(
             WorkingSchedule.doctor_id == doctor.id,
@@ -351,6 +386,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
 
     # Extract entities from this message
     new_service = _resolve_service(db, conv.clinic_id, text_lower, locale)
+    new_doctor = _resolve_doctor(db, conv.clinic_id, user_message)
     new_date = _parse_date(text_lower)
     new_time = _parse_time(text_lower)
     new_phone = _parse_phone(user_message)
@@ -375,7 +411,8 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # is a question about the booking in progress, not an answer to it. Only a
     # *different* service is new information.
     adds_new = bool(new_date or new_time or new_phone or new_name
-                    or (new_service and new_service.id != state.get("service_id")))
+                    or (new_service and new_service.id != state.get("service_id"))
+                    or (new_doctor and new_doctor.id != state.get("doctor_id")))
     if state.get("active") and mid_flow and not has_intent and not adds_new \
             and not _is_affirmative(text_folded) \
             and not (state.get("proposed_slots") and re.fullmatch(r"\s*\d\s*\.?\s*", user_message)):
@@ -386,6 +423,13 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
 
     if new_service:
         state["service_id"] = new_service.id
+    if new_doctor and new_doctor.id != state.get("doctor_id"):
+        # Naming a doctor re-opens the times: the ones already quoted were
+        # somebody else's.
+        state["doctor_id"] = new_doctor.id
+        state["doctor_requested"] = True
+        state.pop("proposed_slots", None)
+        state.pop("slot", None)
     if new_date:
         state["date"] = new_date
         state.pop("proposed_slots", None)
@@ -467,10 +511,16 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     if not state.get("date"):
         conv.booking_state = state
         db.commit()
+        # Echo the doctor back when the patient named one, so they can see it
+        # landed rather than discovering in the waiting room that it did not.
+        chosen = db.query(Doctor).filter(Doctor.id == state["doctor_id"]).first() \
+            if state.get("doctor_requested") and state.get("doctor_id") else None
+        with_doctor = f"- Bác sĩ: {chosen.name}\n" if chosen else ""
         return (f"Dạ, tôi đang chuẩn bị yêu cầu đặt lịch cho bạn:\n"
                 f"- Họ tên: {state['full_name']}\n"
                 f"- Số điện thoại: {state['phone']}\n"
                 f"- Dịch vụ: {service.name}\n"
+                f"{with_doctor}"
                 f"Bạn muốn khám vào ngày nào ạ? (ví dụ: ngày mai, thứ 7, hoặc 25/07)")
 
     target_date = date.fromisoformat(state["date"])
@@ -482,10 +532,34 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
 
     # Need proposed slots
     if not state.get("slot"):
+        requested_doctor_id = state.get("doctor_id") if state.get("doctor_requested") else None
         doctor, branch, slots = _pick_doctor_and_slots(
             db, conv.clinic_id, target_date, service.duration_minutes,
             branch_id=conv.branch_id,  # honour the location the patient arrived from
+            doctor_id=requested_doctor_id,   # and the person they asked for
         )
+
+        # The doctor they asked for is not free that day. Say whose diary is
+        # full and let them choose — substituting a colleague silently is how a
+        # patient ends up in front of someone they did not pick.
+        if not slots and requested_doctor_id:
+            named = db.query(Doctor).filter(Doctor.id == requested_doctor_id).first()
+            _, _, any_slots = _pick_doctor_and_slots(
+                db, conv.clinic_id, target_date, service.duration_minutes,
+                branch_id=conv.branch_id)
+            state.pop("date", None)
+            state.pop("proposed_slots", None)
+            conv.booking_state = state
+            db.commit()
+            label = _doctor_label(named.name) if named else "bác sĩ bạn chọn"
+            when = _fmt_date(target_date.isoformat(), locale)
+            if any_slots:
+                return (f"Rất tiếc {when} {label} đã kín lịch ạ. "
+                        f"Bạn muốn chọn ngày khác với {label}, "
+                        f"hay để tôi xếp bác sĩ khác cũng chuyên môn này ạ?")
+            return (f"Rất tiếc {when} {label} không có ca làm việc ạ. "
+                    f"Bạn cho tôi xin một ngày khác nhé?")
+
         if not slots and conv.branch_id and not _branch_ever_open(db, conv.branch_id):
             # The pinned location has no working schedule at all, so no date will
             # ever produce a slot. Say so and unpin, instead of looping the
