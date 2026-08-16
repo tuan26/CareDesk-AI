@@ -90,6 +90,11 @@ _llm_failure_streak: Dict[int, int] = {}
 #: After this many failures in a row, stop pretending and fetch a human.
 LLM_FAILURE_HANDOFF_THRESHOLD = 3
 
+#: How much of the price list travels with every question. One line each, so a
+#: normal clinic's whole catalogue fits comfortably; a chain with hundreds gets
+#: the top of the list and a pointer to reception rather than a wall of text.
+_CATALOGUE_LIMIT = 40
+
 
 def _note_llm_failure(clinic_id: Optional[int]) -> int:
     key = clinic_id or 0
@@ -347,14 +352,26 @@ def query_faq_rag(db: Session, query: str, clinic_id: Optional[int] = None, loca
                 if isinstance(faq, dict) and faq.get("question") and faq.get("answer"):
                     matched_chunks.append(f"Q: {faq['question']} -> A: {faq['answer']}")
 
-    if matched_chunks:
-        context_chunks.extend(matched_chunks)
-    else:
-        # No specific service matched: list this clinic's full catalogue briefly
-        for service in services:
+    # The whole price list, always — then detail for whatever the question was
+    # about.
+    #
+    # It used to be one or the other, and "phòng khám có những dịch vụ gì" got
+    # exactly one service: the word "khám" inside "phòng khám" matched "Khám da
+    # liễu với Bác sĩ chuyên khoa", so the catalogue was suppressed in favour of
+    # a single accidental hit. A patient asking what the clinic offers was told
+    # about a third of it.
+    if services:
+        context_chunks.append("Bảng giá dịch vụ của phòng khám:")
+        for service in services[:_CATALOGUE_LIMIT]:
             content = service_content(service, locale)
-            context_chunks.append(f"- Service {content['name']}: price {service.price:,.0f} VND (duration: {service.duration_minutes} minutes).")
+            context_chunks.append(
+                f"- {content['name']}: {service.price:,.0f} VND"
+                f" ({service.duration_minutes} phút).")
+        if len(services) > _CATALOGUE_LIMIT:
+            context_chunks.append(
+                f"(và {len(services) - _CATALOGUE_LIMIT} dịch vụ khác — hỏi lễ tân)")
 
+    context_chunks.extend(matched_chunks)
     return "\n".join(context_chunks)
 
 

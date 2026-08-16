@@ -92,6 +92,23 @@ def _is_affirmative(text_folded: str) -> bool:
 BOOKING_INTENT_KEYWORDS = [strip_accents(k) for k in _BOOKING_INTENT_SOURCE]
 CANCEL_KEYWORDS = [strip_accents(k) for k in _CANCEL_SOURCE]
 
+#: Vietnamese slots modifiers between the verb and its object, so a fixed phrase
+#: list misses the ordinary ways people ask: "đặt *thêm* lịch", "đặt *giúp tôi*
+#: lịch", "đăng ký *cho tôi* khám". Requiring "đặt lịch" adjacent meant "tôi
+#: muốn đặt thêm lịch laser" registered no intent at all, and the booking the
+#: patient asked for out loud never started.
+_BOOKING_INTENT_PATTERN = re.compile(
+    r"\b(dat|dang ky|lay|xep|book)\b.{0,18}?\b(lich|hen|kham|appointment)\b"
+    # English carries the intent in the verb alone — "I want to book an acne
+    # treatment" names no object this list would recognise.
+    r"|\b(book|schedule|reserve)\b|\bappointment\b"
+)
+
+
+def _has_booking_intent(text_folded: str) -> bool:
+    return (any(kw in text_folded for kw in BOOKING_INTENT_KEYWORDS)
+            or bool(_BOOKING_INTENT_PATTERN.search(text_folded)))
+
 # FAQ_KEYWORDS used to decide which mid-flow questions deserved a real answer.
 # It was the wrong test — it only listed price and address wording, so "có đau
 # không" and "bao lâu thì khỏi" were treated as booking input. Absence of
@@ -438,7 +455,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # original because their patterns already spell out both variants.
     text_folded = strip_accents(user_message)
     locale = locale_for_conversation(conv, None)
-    has_intent = any(kw in text_folded for kw in BOOKING_INTENT_KEYWORDS)
+    has_intent = _has_booking_intent(text_folded)
 
     # Read what the patient said before deciding whether to answer, so details
     # given while the assistant was doing the talking are not lost.
@@ -535,8 +552,17 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         # the doctor, the day — and the flow then asked for all of it again.
         state = {**state, "active": True}
 
+    # Changing the service changes the appointment length, so any times already
+    # quoted were for the old one. Noted here so the reply can say it changed —
+    # answering "đổi sang laser" with a byte-identical slot list looks to the
+    # patient like the message never arrived.
+    switched_service = bool(new_service and state.get("service_id")
+                            and new_service.id != state["service_id"])
     if new_service:
         state["service_id"] = new_service.id
+        if switched_service:
+            state.pop("proposed_slots", None)
+            state.pop("slot", None)
     if releases_doctor:
         # "bác sĩ khác cũng được" — the only way out of a pinned doctor whose
         # diary is full. Without it the assistant asks the same question for
@@ -557,6 +583,11 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         state["date"] = new_date
         state.pop("proposed_slots", None)
         state.pop("slot", None)
+    if new_time:
+        # Parsed on every message and then dropped here, so "đặt lịch trị mụn
+        # ngày mai lúc 9h" — a complete instruction — still ended with the
+        # assistant asking what time.
+        state["time"] = new_time
     if new_phone:
         state["phone"] = new_phone
     if new_name:
@@ -728,15 +759,56 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
                     f"có khách hủy lịch là tôi báo bạn ngay để nhận chỗ trước nhé!")
         state["doctor_id"] = doctor.id
         state["branch_id"] = branch.id if branch else None
-        top = slots[:3]
-        state["proposed_slots"] = top
-        conv.booking_state = state
-        db.commit()
-        numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(top))
-        return (f"Dạ, {_fmt_date(state['date'], locale)} {_doctor_label(doctor.name)} còn các khung giờ trống:\n{numbered}\n"
-                f"Bạn vui lòng chọn một khung giờ (nhắn số 1/2/3 hoặc giờ cụ thể) nhé ạ.")
+
+        # They already named a time. Asking them to pick it again off a list is
+        # the assistant not listening — "đặt lịch trị mụn ngày mai lúc 9h" is a
+        # complete instruction, and 9h is right there in it.
+        wanted = state.get("time")
+        if wanted and wanted in slots:
+            state["slot"] = wanted
+            state.pop("proposed_slots", None)
+            conv.booking_state = state
+            db.commit()
+        else:
+            top = slots[:3]
+            state["proposed_slots"] = top
+            conv.booking_state = state
+            db.commit()
+            numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(top))
+            unavailable = ""
+            if wanted:
+                # Say why they are being asked again, rather than repeating the
+                # question as though they had not answered it.
+                unavailable = f"Rất tiếc {wanted} đã có người đặt ạ. "
+            changed = f"Dạ, đã đổi sang {service.name}. " if switched_service else "Dạ, "
+            return (f"{unavailable}{changed}{_fmt_date(state['date'], locale)} "
+                    f"{_doctor_label(doctor.name)} còn các khung giờ trống:\n{numbered}\n"
+                    f"Bạn vui lòng chọn một khung giờ (nhắn số 1/2/3 hoặc giờ cụ thể) nhé ạ.")
 
         
+    # Re-check the slot before writing anything down. It was offered a message
+    # or ten ago, and in the meantime the receptionist or another patient may
+    # have taken it — the web form has always re-checked; the chat did not, so
+    # it happily recorded a time that had just gone.
+    still_free = open_slots(
+        db, conv.clinic_id, target_date, service.duration_minutes,
+        branch_id=state.get("branch_id") or conv.branch_id,
+        doctor_id=state.get("doctor_id"))
+    free_times = [t.strftime("%H:%M") for t, _ in still_free]
+    if state["slot"] not in free_times:
+        taken = state["slot"]
+        state.pop("slot", None)
+        state.pop("time", None)
+        state["proposed_slots"] = free_times[:3]
+        conv.booking_state = state
+        db.commit()
+        if not free_times:
+            return (f"Rất tiếc {taken} vừa có người đặt mất và ngày này cũng đã kín ạ. "
+                    f"Bạn chọn giúp tôi một ngày khác nhé?")
+        return (f"Rất tiếc {taken} vừa có người đặt mất ạ. "
+                f"Còn các khung giờ: {', '.join(free_times[:3])}. "
+                f"Bạn chọn lại giúp tôi nhé?")
+
     # All details are present. A public chat never reserves inventory or creates an
     # appointment: it records only the patient's preference for staff confirmation.
     service_name = service_content(service, locale)["name"]

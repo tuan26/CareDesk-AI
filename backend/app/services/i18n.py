@@ -54,15 +54,33 @@ def booking_text(locale: str, key: str) -> str:
 
 
 def service_content(service: Any, locale: str) -> Dict[str, Any]:
-    """Return a service's translated fields while safely retaining legacy values."""
-    translated = translation_for(getattr(service, "localized_content", None), locale)
+    """A service's fields in the requested language.
+
+    The requested locale first, then the clinic's own wording, and only then
+    another language. translation_for alone falls back vi -> en, so a clinic that
+    added an English name to one service started showing "Medical acne
+    treatment" to Vietnamese patients — the untranslated legacy field was right
+    there and was skipped because a translation into *some* language existed.
+    """
+    content = getattr(service, "localized_content", None) or {}
+    exact = content.get(normalize_locale(locale)) or {}
+    translated = exact or translation_for(content, locale)
+    if exact:
+        return {
+            "name": exact.get("name") or service.name,
+            "description": exact.get("description") or service.description or "",
+            "preparation_instructions": exact.get("preparation_instructions")
+            or service.preparation_instructions or "",
+            "faq": exact.get("faq") or service.faq_data or [],
+        }
+    # No translation in this language: the clinic's own text beats someone
+    # else's language.
     return {
-        "name": translated.get("name") or service.name,
-        "description": translated.get("description") or service.description or "",
-        "preparation_instructions": translated.get("preparation_instructions")
-        or service.preparation_instructions
-        or "",
-        "faq": translated.get("faq") or service.faq_data or [],
+        "name": service.name or translated.get("name"),
+        "description": service.description or translated.get("description") or "",
+        "preparation_instructions": (service.preparation_instructions
+                                     or translated.get("preparation_instructions") or ""),
+        "faq": service.faq_data or translated.get("faq") or [],
     }
 
 
