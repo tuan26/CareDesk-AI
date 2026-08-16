@@ -235,3 +235,52 @@ def test_the_sticky_bar_does_not_link_to_the_current_page(client, clinic):
 
     brand = client.get(f"/book/{clinic['clinic'].slug}").text
     assert 'class="sticky-cta"' in brand, "thanh CTA phải còn ở trang giới thiệu"
+
+
+# --- choosing a doctor, or not -----------------------------------------------
+
+def test_the_form_offers_a_doctor_without_demanding_one(client, clinic):
+    """Most patients have no preference and should not be made to express one,
+    so "Bác sĩ bất kỳ" is a real default rather than a skip link — and it is not
+    a sixth step, because the flow is already long enough."""
+    page = client.get(_url(clinic, branch=clinic["branches"][0].slug,
+                           service=clinic["service"].id)).text
+
+    # One doctor at this branch: nothing to choose between, so no picker at all.
+    assert "Bác sĩ bất kỳ" not in page
+
+
+def test_the_picker_appears_once_there_is_a_choice(client, db, clinic):
+    second = Doctor(clinic_id=clinic["clinic"].id, name="BS Hai",
+                    branch_id=clinic["branches"][0].id, is_active=True)
+    db.add(second)
+    db.flush()
+    for day in range(7):
+        db.add(WorkingSchedule(doctor_id=second.id, branch_id=clinic["branches"][0].id,
+                               day_of_week=day, start_time=datetime.time(8, 0),
+                               end_time=datetime.time(17, 0)))
+    db.commit()
+
+    page = client.get(_url(clinic, branch=clinic["branches"][0].slug,
+                           service=clinic["service"].id)).text
+
+    assert "Bác sĩ bất kỳ" in page
+    assert "BS Hai" in page
+    assert f"doctor={second.id}" in page
+
+
+def test_a_doctor_from_another_clinic_is_ignored_not_obeyed(client, db, clinic):
+    """A shared link carrying a stale ?doctor= should still book — just without
+    the pin — rather than 500 or silently cross a tenant boundary."""
+    other = Clinic(name="Phòng khám khác", is_active=True)
+    db.add(other)
+    db.flush()
+    theirs = Doctor(clinic_id=other.id, name="BS Ngoài", is_active=True)
+    db.add(theirs)
+    db.commit()
+
+    response = client.get(_url(clinic, branch=clinic["branches"][0].slug,
+                               service=clinic["service"].id, doctor=theirs.id))
+
+    assert response.status_code == 200
+    assert "BS Ngoài" not in response.text

@@ -56,6 +56,18 @@ _AFFIRMATIVE = re.compile(
 #: ạ, em hỏi thêm chút" contains "được" and agrees to nothing.
 _AFFIRMATIVE_MAX_WORDS = 4
 
+#: "When is she free?" — the natural next question after being told a doctor is
+#: fully booked, and the one the assistant used to answer with "tôi không có
+#: thông tin chi tiết về lịch trống" while the schedule sat in the database.
+_WHEN_FREE = re.compile(
+    r"(ngay nao|hom nao|khi nao|lich trong|con trong|con lich|lich lam viec|"
+    r"ranh ngay|lam viec ngay|which days?|when.*(free|available))"
+)
+
+#: How far ahead "trống ngày nào" looks. Two weeks covers "tuần sau" and the
+#: window nearly every aesthetics booking falls in.
+_FREE_DAYS_HORIZON = 14
+
 #: "Whoever is free." Pinning a doctor has to be undoable, or a patient told
 #: their choice is fully booked has no way to say yes to the alternative and
 #: sits in the same question for ever.
@@ -275,6 +287,10 @@ def days_with_availability(db: Session, clinic_id: Optional[int], start: date,
     ]
 
 
+def _resolve_service_by_id(db: Session, service_id: Optional[int]) -> Optional[Service]:
+    return db.query(Service).filter(Service.id == service_id).first() if service_id else None
+
+
 def _resolve_doctor(db: Session, clinic_id: Optional[int], text: str) -> Optional[Doctor]:
     """Which doctor the patient named, if any.
 
@@ -414,6 +430,29 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # first activated there is nothing to fall back to, and bailing out would
     # leave the patient with whatever the model happened to say and no question
     # to answer.
+    # "Bác sĩ B tuần sau trống ngày nào?" — answerable from the schedule, and
+    # answered until now with "tôi không có thông tin chi tiết về lịch trống"
+    # followed by a handoff. The rota is in the database; not offering it sent
+    # the patient to a receptionist to read out something the product knows.
+    asked_about = new_doctor or (
+        db.query(Doctor).filter(Doctor.id == state["doctor_id"]).first()
+        if state.get("doctor_id") else None)
+    if asked_about and _WHEN_FREE.search(text_folded):
+        service_for_days = _resolve_service_by_id(db, state.get("service_id"))
+        duration = service_for_days.duration_minutes if service_for_days else 30
+        free = [(day, count) for day, count in days_with_availability(
+            db, conv.clinic_id, clock.today(), _FREE_DAYS_HORIZON, duration,
+            branch_id=conv.branch_id, doctor_id=asked_about.id) if count]
+        conv.booking_state = state
+        db.commit()
+        label = _doctor_label(asked_about.name)
+        if not free:
+            return (f"Trong 2 tuần tới {label} chưa có lịch trống ạ. "
+                    f"Bạn muốn để tôi xếp bác sĩ khác cùng chuyên môn không ạ?")
+        listed = ", ".join(_fmt_date(day.isoformat(), locale) for day, _ in free[:6])
+        return (f"Dạ, {label} còn lịch các ngày: {listed}.\n"
+                f"Bạn chọn ngày nào ạ?")
+
     mid_flow = any(state.get(k) for k in
                    ("service_id", "date", "slot", "proposed_slots", "full_name", "phone"))
     # Naming the service already chosen adds nothing — "Laser CO2 có đau không?"

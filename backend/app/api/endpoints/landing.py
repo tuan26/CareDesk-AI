@@ -230,6 +230,19 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
                  or (brand.clinic_ids[0] if brand.clinic_ids else None))
     duration = (service.duration_minutes or 30) if service else 30
 
+    # Only doctors who actually hold a shift at the chosen location. A chain's
+    # full list would offer someone who works forty kilometres away.
+    doctors = brand.doctors
+    if branch:
+        from backend.app.models.models import WorkingSchedule
+        rostered = {row.doctor_id for row in db.query(WorkingSchedule.doctor_id)
+                    .filter(WorkingSchedule.branch_id == branch.id).distinct()}
+        doctors = [d for d in doctors if d.id in rostered]
+    doctor = next((d for d in doctors if str(d.id) == str(doctor_id)), None)
+    # An id that does not belong here is ignored rather than obeyed: a shared
+    # link with a stale ?doctor= should still book, just without the pin.
+    doctor_id = doctor.id if doctor else None
+
     # Only once the patient has narrowed to a location and a treatment: before
     # that the answer would be wrong (different branches, different durations)
     # and the work wasted on every visitor who never reaches step 3.
@@ -237,7 +250,7 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
     if branch and service:
         calendar = days_with_availability(
             db, clinic_id, today, _CALENDAR_DAYS, duration,
-            branch_id=branch.id, doctor_id=int(doctor_id) if doctor_id else None,
+            branch_id=branch.id, doctor_id=doctor_id,
         )
 
     slots = []
@@ -246,7 +259,7 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
             db, clinic_id=clinic_id,
             target_date=chosen_day, duration=duration,
             branch_id=branch.id,
-            doctor_id=int(doctor_id) if doctor_id else None,
+            doctor_id=doctor_id,
         )
 
     return {
@@ -254,7 +267,7 @@ def _booking_context(db: Session, brand, branch_slug, service_id, day, doctor_id
         "service": service, "days": days, "chosen_day": chosen_day,
         "calendar": _calendar_weeks(calendar), "slots": _slots_by_part(slots),
         "slot_count": len(slots),
-        "doctors": brand.doctors,
+        "doctors": doctors, "doctor": doctor,
         "doctor_id": doctor_id,
     }
 
@@ -395,11 +408,28 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
         target = date.fromisoformat(day)
     except ValueError:
         return _back("Vui lòng chọn ngày khám.")
+    # A doctor is optional. When one was chosen the slot is re-checked against
+    # that person's diary, so a form left open while they filled up cannot book
+    # a colleague's time under their name.
+    requested_doctor = None
+    if form.get("doctor_id"):
+        from backend.app.models.models import Doctor
+        requested_doctor = db.query(Doctor).filter(
+            Doctor.id == int(form["doctor_id"]),
+            Doctor.clinic_id == clinic_id,          # never another tenant's staff
+            Doctor.is_active == True,               # noqa: E712
+        ).first()
+
     free = open_slots(db, clinic_id, target, service.duration_minutes or 30,
                       branch_id=branch.id,
-                      doctor_id=int(form["doctor_id"]) if form.get("doctor_id") else None)
+                      doctor_id=requested_doctor.id if requested_doctor else None)
     if slot not in {s.strftime("%H:%M") for s, _ in free}:
         return _back("Khung giờ vừa chọn không còn trống. Vui lòng chọn giờ khác.")
+
+    # Whoever actually holds that time — the named doctor, or the one the slot
+    # search settled on. Recording nobody would put reception back where it was.
+    booked_doctor = requested_doctor or next(
+        (doc for slot_time, doc in free if slot_time.strftime("%H:%M") == slot), None)
 
     # One record per phone, same as the chat. This form used to create a new
     # patient on every submission, so booking twice from the website produced
@@ -419,6 +449,7 @@ async def booking_submit(slug: str, request: Request, db: Session = Depends(get_
     db.add(BookingRequest(
         clinic_id=clinic_id, patient_id=patient.id, service_id=service.id,
         branch_id=branch.id,
+        doctor_id=booked_doctor.id if booked_doctor else None,
         service_or_need=service.name,
         preferred_at=preferred_at,
         preferred_time=_fmt_slot(preferred_at, locale),

@@ -159,6 +159,12 @@ section.dark .meta,section.dark .lead{color:rgba(245,241,234,.72)}
 .card.pick .mini{flex:none}
 .card.chosen{border-left:3px solid var(--olive)}
 
+/* Refine-in-place, not a step of its own: the flow is already five questions
+   long and most patients have no preference to express. */
+.picker{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+.picker-label{font-size:12px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted);margin-right:2px}
+
 /* A calendar, because "which days can I actually come" is the question. Closed
    and full days stay visible but plainly unavailable — hiding them makes the
    month look sparse and leaves the patient wondering what happened. */

@@ -140,7 +140,29 @@
       {{ t('step_of', n=step_no(3), total=total_steps) }}{% if chosen_day %} · {{ t('picked') }}{% endif %}
     </p>
     <h2>{{ t('step_day') }}</h2>
-    <p class="meta" style="margin-bottom:18px">{{ t('hint_day') }}</p>
+    {# With a doctor pinned the greyed days are that doctor's days off, not the
+       clinic's — saying "phòng khám nghỉ" would be plainly wrong. #}
+    <p class="meta" style="margin-bottom:14px">
+      {{ t('hint_day_doctor') if doctor else t('hint_day') }}</p>
+
+    {#
+      Choosing a doctor refines the calendar in place rather than adding a sixth
+      step. "Bất kỳ" is selected by default and is a real choice, not a skip
+      link — most patients have no preference and should not be made to express
+      one, while the patient who came for a specific doctor can say so without
+      leaving the page.
+    #}
+    {% if doctors|length > 1 %}
+    {% set base = canonical_path ~ '?branch=' ~ branch.slug ~ '&service=' ~ service.id %}
+    <div class="picker">
+      <span class="picker-label">{{ t('pick_doctor') }}</span>
+      <a class="mini {% if not doctor %}{% else %}alt{% endif %}" href="{{ base }}#buoc-3">{{ t('any_doctor') }}</a>
+      {% for d in doctors %}
+      <a class="mini {% if doctor and doctor.id == d.id %}{% else %}alt{% endif %}"
+         href="{{ base }}&doctor={{ d.id }}#buoc-3">{{ d.name }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="cal">
       <div class="cal-head">
@@ -155,7 +177,7 @@
             {% set d, free = cell %}
             {% if free %}
             <a class="cal-day{% if chosen_day == d %} on{% endif %}"
-               href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}&day={{ d.isoformat() }}#buoc-4">
+               href="{{ canonical_path }}?branch={{ branch.slug }}&service={{ service.id }}{% if doctor %}&doctor={{ doctor.id }}{% endif %}&day={{ d.isoformat() }}#buoc-4">
               <b>{{ d.day }}</b>
               <em>{% if d == today %}{{ t('today') }}{% else %}{{ t('day_free', n=free) }}{% endif %}</em>
             </a>
@@ -179,6 +201,7 @@
   <div class="wrap narrow">
     <p class="step-label">{{ t('step_of', n=step_no(4), total=total_steps) }}</p>
     <h2>{{ t('step_slot') }} — {{ chosen_day.strftime('%d/%m/%Y') }}</h2>
+    {% if doctor %}<p class="meta" style="margin-top:-2px">{{ doctor.name }}</p>{% endif %}
 
     {% if not slots %}
       <div class="card meta">{{ t('no_slots') }}</div>
@@ -188,6 +211,7 @@
       <input type="hidden" name="branch_slug" value="{{ branch.slug }}">
       <input type="hidden" name="service_id" value="{{ service.id }}">
       <input type="hidden" name="day" value="{{ chosen_day.isoformat() }}">
+      {% if doctor %}<input type="hidden" name="doctor_id" value="{{ doctor.id }}">{% endif %}
       <input type="hidden" name="locale" value="{{ locale }}">
 
       {% for part, times in slots %}

@@ -198,3 +198,34 @@ def test_releasing_the_doctor_is_not_mistaken_for_chatter(db, setup):
     handle_booking(db, setup["conv"], "cho tôi Bác sĩ Lê Thị B")
 
     assert handle_booking(db, setup["conv"], "bác sĩ nào cũng được ạ") is not None
+
+
+# --- "trống ngày nào" is answerable from the rota -----------------------------
+
+def test_which_days_a_doctor_is_free_comes_from_the_schedule(db, setup):
+    """It used to answer "tôi không có thông tin chi tiết về lịch trống" and hand
+    over to a receptionist, who then read out something the product knows."""
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    db.query(WorkingSchedule).filter(
+        WorkingSchedule.doctor_id == setup["b"].id,
+        WorkingSchedule.day_of_week == tomorrow.weekday()).delete()
+    db.commit()
+
+    reply = handle_booking(db, setup["conv"], "bác sĩ Lê Thị B tuần sau trống ngày nào")
+
+    assert reply is not None, "câu hỏi lịch trống vẫn rơi xuống LLM"
+    assert "Lê Thị B" in reply
+    assert "còn lịch các ngày" in reply
+    # The day she does not work must not be offered.
+    assert tomorrow.strftime("%d/%m/%Y") not in reply
+
+
+def test_a_doctor_with_no_free_days_is_said_so(db, setup):
+    db.query(WorkingSchedule).filter(
+        WorkingSchedule.doctor_id == setup["b"].id).delete()
+    db.commit()
+
+    reply = handle_booking(db, setup["conv"], "bác sĩ Lê Thị B trống ngày nào")
+
+    assert "chưa có lịch trống" in reply
+    assert "bác sĩ khác" in reply.lower(), "không mở lối đi tiếp"
