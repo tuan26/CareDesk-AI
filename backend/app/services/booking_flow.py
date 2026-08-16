@@ -56,6 +56,14 @@ _AFFIRMATIVE = re.compile(
 #: ạ, em hỏi thêm chút" contains "được" and agrees to nothing.
 _AFFIRMATIVE_MAX_WORDS = 4
 
+#: "Whoever is free." Pinning a doctor has to be undoable, or a patient told
+#: their choice is fully booked has no way to say yes to the alternative and
+#: sits in the same question for ever.
+_ANY_DOCTOR = re.compile(
+    r"(bac si khac|bs khac|bac si nao cung|ai cung duoc|sao cung duoc|"
+    r"tuy phong kham|tuy benh vien|nguoi khac|another doctor|any doctor|anyone)"
+)
+
 
 def _doctor_label(name: str) -> str:
     """"bác sĩ {name}" reads as "bác sĩ Bác sĩ Nguyễn Văn A" whenever the clinic
@@ -387,6 +395,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # Extract entities from this message
     new_service = _resolve_service(db, conv.clinic_id, text_lower, locale)
     new_doctor = _resolve_doctor(db, conv.clinic_id, user_message)
+    releases_doctor = bool(state.get("doctor_requested")) and bool(_ANY_DOCTOR.search(text_folded))
     new_date = _parse_date(text_lower)
     new_time = _parse_time(text_lower)
     new_phone = _parse_phone(user_message)
@@ -410,7 +419,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     # Naming the service already chosen adds nothing — "Laser CO2 có đau không?"
     # is a question about the booking in progress, not an answer to it. Only a
     # *different* service is new information.
-    adds_new = bool(new_date or new_time or new_phone or new_name
+    adds_new = bool(new_date or new_time or new_phone or new_name or releases_doctor
                     or (new_service and new_service.id != state.get("service_id"))
                     or (new_doctor and new_doctor.id != state.get("doctor_id")))
     if state.get("active") and mid_flow and not has_intent and not adds_new \
@@ -423,7 +432,15 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
 
     if new_service:
         state["service_id"] = new_service.id
-    if new_doctor and new_doctor.id != state.get("doctor_id"):
+    if releases_doctor:
+        # "bác sĩ khác cũng được" — the only way out of a pinned doctor whose
+        # diary is full. Without it the assistant asks the same question for
+        # ever, because the answer it offered had no handler.
+        state.pop("doctor_id", None)
+        state.pop("doctor_requested", None)
+        state.pop("proposed_slots", None)
+        state.pop("slot", None)
+    elif new_doctor and new_doctor.id != state.get("doctor_id"):
         # Naming a doctor re-opens the times: the ones already quoted were
         # somebody else's.
         state["doctor_id"] = new_doctor.id
@@ -547,7 +564,6 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
             _, _, any_slots = _pick_doctor_and_slots(
                 db, conv.clinic_id, target_date, service.duration_minutes,
                 branch_id=conv.branch_id)
-            state.pop("date", None)
             state.pop("proposed_slots", None)
             conv.booking_state = state
             db.commit()

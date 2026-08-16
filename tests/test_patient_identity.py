@@ -169,3 +169,32 @@ def test_two_clinics_sharing_a_number_are_two_patients(db, setup):
     db.commit()
 
     assert theirs.id != setup["patient"].id
+
+
+def test_the_patient_can_take_the_offered_alternative(db, setup):
+    """The reply offers "ngày khác, hay bác sĩ khác?" — and the second half had
+    no handler, so a patient who agreed to it sat in the same question for
+    ever."""
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    db.query(WorkingSchedule).filter(
+        WorkingSchedule.doctor_id == setup["b"].id,
+        WorkingSchedule.day_of_week == tomorrow.weekday()).delete()
+    db.commit()
+
+    handle_booking(db, setup["conv"], "cho tôi Bác sĩ Lê Thị B")
+    handle_booking(db, setup["conv"], tomorrow.strftime("ngày %d/%m/%Y"))
+    reply = handle_booking(db, setup["conv"], "bác sĩ khác cũng được")
+
+    # The day they already chose is kept: releasing the doctor should produce
+    # times, not send them back to "ngày nào ạ?".
+    assert reply is not None and "khung giờ" in reply.lower(), reply
+    db.refresh(setup["conv"])
+    assert not setup["conv"].booking_state.get("doctor_requested")
+
+
+def test_releasing_the_doctor_is_not_mistaken_for_chatter(db, setup):
+    """It carries no service, date, phone or name, so the mid-flow guard would
+    hand it to the assistant and the pin would never come off."""
+    handle_booking(db, setup["conv"], "cho tôi Bác sĩ Lê Thị B")
+
+    assert handle_booking(db, setup["conv"], "bác sĩ nào cũng được ạ") is not None
