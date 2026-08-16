@@ -131,15 +131,58 @@ def test_the_browser_that_had_the_conversation_gets_it_back(client, db):
         "trị mụn bao nhiêu tiền", "Dạ 450.000đ ạ"]
 
 
-def test_resuming_rotates_the_token(client, db):
-    """Same rule as every other public call: a token is used once."""
+def test_reading_does_not_rotate_the_token(client, db):
+    """Rotating on reads as well as writes is what stranded the browser.
+
+    The four-second poll and a slow send could each rotate while both were in
+    flight; the browser kept whichever reply landed last, the database held the
+    other, and only one previous token is remembered. Every request after that
+    was 403 — and because the send path ignored the status, the panel showed no
+    answer and no error at all.
+    """
+    conv = _conversation(db)
+    original = conv.public_session_token
+
+    first = client.get(f"{API}/conversations/{conv.id}/resume",
+                       headers={"X-CareDesk-Session": original})
+    second = client.get(f"{API}/conversations/{conv.id}/messages",
+                        headers={"X-CareDesk-Session": original})
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.headers.get("X-CareDesk-Session") == original
+
+
+def test_sending_still_rotates(client, db):
+    """Where rotation earns its keep: a write is user-initiated and serial."""
     conv = _conversation(db)
 
-    response = client.get(f"{API}/conversations/{conv.id}/resume",
-                          headers={"X-CareDesk-Session": conv.public_session_token})
+    response = client.post(f"{API}/conversations/{conv.id}/messages",
+                           json={"content": "xin chào"},
+                           headers={"X-CareDesk-Session": conv.public_session_token})
 
     rotated = response.headers.get("X-CareDesk-Session")
     assert rotated and rotated != conv.public_session_token
+
+
+def test_a_poll_during_a_send_does_not_break_the_session(client, db):
+    """The race, in the order it actually happened: poll, send, poll."""
+    conv = _conversation(db)
+    token = conv.public_session_token
+
+    assert client.get(f"{API}/conversations/{conv.id}/messages",
+                      headers={"X-CareDesk-Session": token}).status_code == 200
+    sent = client.post(f"{API}/conversations/{conv.id}/messages",
+                       json={"content": "trị mụn bao nhiêu"},
+                       headers={"X-CareDesk-Session": token})
+    assert sent.status_code == 200
+    token = sent.headers.get("X-CareDesk-Session") or token
+
+    # The poll that was already in flight used the pre-send token; the one after
+    # uses what the send handed back. Both must still work.
+    assert client.get(f"{API}/conversations/{conv.id}/messages",
+                      headers={"X-CareDesk-Session": conv.public_session_token}).status_code == 200
+    assert client.get(f"{API}/conversations/{conv.id}/messages",
+                      headers={"X-CareDesk-Session": token}).status_code == 200
 
 
 def test_a_stale_thread_is_not_resumed(client, db):

@@ -32,7 +32,8 @@ def _scoped_conv(query, user: User):
     return query
 
 
-def _authorize_public_conversation(db: Session, conv: Conversation, session_token: Optional[str]) -> str:
+def _authorize_public_conversation(db: Session, conv: Conversation, session_token: Optional[str],
+                                   rotate: bool = False) -> Optional[str]:
     """Validate and rotate the conversation-bound session.
 
     Always required. This used to be opt-in per clinic, defaulting to off, which
@@ -42,7 +43,8 @@ def _authorize_public_conversation(db: Session, conv: Conversation, session_toke
     corner panel, the /chat page and the embeddable widget all send it back), so
     there was nothing on the other side of that trade.
     """
-    valid, rotated_token = verify_and_rotate_public_chat_session(db, conv.id, session_token)
+    valid, rotated_token = verify_and_rotate_public_chat_session(
+        db, conv.id, session_token, rotate=rotate)
     if not valid:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Phiên trò chuyện không hợp lệ hoặc đã hết hạn.")
@@ -152,8 +154,9 @@ def send_message(
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
 
-    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
-        db, conv, x_caredesk_session)
+    rotated = _authorize_public_conversation(db, conv, x_caredesk_session, rotate=True)
+    if rotated:
+        response.headers["X-CareDesk-Session"] = rotated
 
     # Save patient message
     patient_msg = Message(
@@ -232,8 +235,9 @@ def resume_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
 
-    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
-        db, conv, x_caredesk_session)
+    kept = _authorize_public_conversation(db, conv, x_caredesk_session)
+    if kept:
+        response.headers["X-CareDesk-Session"] = kept
 
     age = clock.now() - (conv.updated_at or conv.created_at or clock.now())
     if age > timedelta(hours=settings.PUBLIC_CHAT_RESUME_MAX_AGE_HOURS):
@@ -278,8 +282,12 @@ def poll_messages(
     if not conv:
         raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại")
 
-    response.headers["X-CareDesk-Session"] = _authorize_public_conversation(
-        db, conv, x_caredesk_session)
+    # Polling does not rotate: it fires every four seconds and racing a slow
+    # send is what used to strand the browser on a token the server had already
+    # replaced. See public_chat_session.
+    kept = _authorize_public_conversation(db, conv, x_caredesk_session)
+    if kept:
+        response.headers["X-CareDesk-Session"] = kept
     return db.query(Message).filter(
         Message.conversation_id == conv_id,
         Message.id > after_id

@@ -61,12 +61,22 @@ def issue_public_chat_session(db: Session, conversation_id: int) -> str:
 
 
 def verify_and_rotate_public_chat_session(
-    db: Session, conversation_id: int, token: Optional[str]
+    db: Session, conversation_id: int, token: Optional[str], rotate: bool = True
 ) -> Tuple[bool, Optional[str]]:
-    """Validate one conversation-bound session and rotate its bearer token.
+    """Validate one conversation-bound session, optionally rotating its token.
 
     The immediately preceding token remains valid for a short grace period so
     concurrent poll/send requests do not race each other.
+
+    That grace was not enough on its own. Rotating on *reads* as well as writes
+    meant the four-second poll and a slow send could rotate twice while both
+    were in flight: the browser kept whichever reply landed last, the database
+    held the other, and only one previous token is remembered — so every request
+    after that was 403 and the conversation went silent with no error shown.
+
+    Reads no longer rotate. They still prove possession and still push the
+    expiry out; the new token is minted only when the patient actually sends
+    something, which is serial by nature.
     """
     if not token:
         return False, None
@@ -82,10 +92,16 @@ def verify_and_rotate_public_chat_session(
     if not session:
         return False, None
 
+    session.expires_at = now + timedelta(seconds=settings.PUBLIC_CHAT_SESSION_TTL_SECONDS)
+    session.last_used_at = now
+    if not rotate:
+        # Hand back whatever the caller presented. It may be the grace-period
+        # token rather than the current one, and telling the browser to keep
+        # using that would expire under it in thirty seconds.
+        return True, token if session.token_hash == token_hash else None
+
     rotated = secrets.token_urlsafe(32)
     session.previous_token_hash = session.token_hash
     session.previous_expires_at = now + timedelta(seconds=30)
     session.token_hash = _hash(rotated)
-    session.expires_at = now + timedelta(seconds=settings.PUBLIC_CHAT_SESSION_TTL_SECONDS)
-    session.last_used_at = now
     return True, rotated

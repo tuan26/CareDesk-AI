@@ -80,6 +80,7 @@ UI_TEXT = {
         "branch_full": "chưa nhận đặt lịch online",
         "open_chat": "Trò chuyện với trợ lý ảo", "close_chat": "Đóng",
         "replying": "Đang trả lời…", "send": "Gửi",
+        "session_expired": "Phiên trò chuyện đã hết hạn. Bạn nhắn lại giúp tôi để bắt đầu cuộc trò chuyện mới nhé.",
     },
     "en": {
         "title": "CareDesk AI Virtual Receptionist", "active": "Available 24/7",
@@ -94,6 +95,7 @@ UI_TEXT = {
         "branch_full": "online booking unavailable",
         "open_chat": "Chat with the virtual assistant", "close_chat": "Close",
         "replying": "Replying…", "send": "Send",
+        "session_expired": "This chat session has expired. Send your message again to start a new one.",
     },
     "ja": {
         "title": "CareDesk AI 受付アシスタント", "active": "24時間対応",
@@ -108,6 +110,7 @@ UI_TEXT = {
         "branch_full": "オンライン予約不可",
         "open_chat": "バーチャルアシスタントと話す", "close_chat": "閉じる",
         "replying": "返信中…", "send": "送信",
+        "session_expired": "セッションの有効期限が切れました。もう一度送信すると新しい会話が始まります。",
     },
 }
 

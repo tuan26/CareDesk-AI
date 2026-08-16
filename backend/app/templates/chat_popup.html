@@ -372,6 +372,11 @@
                              token ? { 'X-CareDesk-Session': token } : {}),
       body: JSON.stringify({ content: text })
     }).then(function (r) {
+      // Anything but 2xx used to fall through to the "draw the reply" branch,
+      // where an error body has no .sender — so the panel showed nothing at
+      // all. No answer and no error is the worst of both: the patient waits,
+      // then leaves.
+      if (!r.ok) throw new Error(r.status === 403 ? 'expired' : 'send');
       token = r.headers.get('X-CareDesk-Session') || token;
       remember();
       return r.json();
@@ -388,8 +393,18 @@
         banner.hidden = false;
         field.placeholder = t('agent_placeholder');
       }
-    }).catch(function () {
+    }).catch(function (err) {
       waiting.remove();
+      if (err && err.message === 'expired') {
+        // The thread cannot be continued. Say so and clear it, so the next
+        // message starts a conversation that works instead of failing again.
+        say('bot', t('session_expired'));
+        if (poll) { clearInterval(poll); poll = null; }
+        forget();
+        convId = null;
+        token = null;
+        return;
+      }
       say('bot', t('send_error'));
     });
   }
@@ -401,6 +416,7 @@
     fetch(API + '/chat/conversations/' + convId + '/messages?after_id=' + lastId, {
       headers: token ? { 'X-CareDesk-Session': token } : {}
     }).then(function (r) {
+      if (r.status === 403) { clearInterval(poll); poll = null; throw new Error('expired'); }
       if (!r.ok) throw new Error('poll');
       token = r.headers.get('X-CareDesk-Session') || token;
       remember();
