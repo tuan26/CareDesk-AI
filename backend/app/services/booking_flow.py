@@ -49,7 +49,7 @@ _CANCEL_SOURCE = [
 #: consent reads half of all questions as agreement, which is precisely how
 #: "Làm xong có phải kiêng nắng không?" got answered with "ngày nào ạ?".
 _AFFIRMATIVE = re.compile(
-    r"\b(ok|oke|okie|okay|vang|dung roi|duoc|yes|sure|はい|お願い)\b"
+    r"\b(ok|oke|okie|okay|vang|dung|dung roi|duoc|chuan|yes|sure|はい|お願い)\b"
 )
 
 #: An affirmative is a whole reply, not a word inside a sentence. "Được không
@@ -127,10 +127,20 @@ def _parse_date(text_lower: str) -> Optional[str]:
     if "hôm nay" in text_lower or "bữa nay" in text_lower or "today" in text_lower or "今日" in text_lower:
         return today.isoformat()
 
+    next_week = bool(re.search(r"tuần sau|tuần tới|tuan sau|tuan toi|next week|来週", text_lower))
     for pattern, weekday in WEEKDAY_PATTERNS:
         if re.search(pattern, text_lower):
             days_ahead = (weekday - today.weekday()) % 7
+            # "thứ 3 tuần sau" said on a Monday means eight days away, not one.
+            # Without this the patient is booked a week early and finds out by
+            # turning up to a clinic that is not expecting them. days_ahead == 0
+            # is the same trap: "thứ 3" said on a Tuesday means next Tuesday.
+            if next_week or days_ahead == 0:
+                days_ahead += 7
             return (today + timedelta(days=days_ahead)).isoformat()
+
+    if next_week:
+        return (today + timedelta(days=7)).isoformat()
 
     # dd/mm or dd-mm (optionally /yyyy)
     m = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\b", text_lower)
@@ -385,6 +395,37 @@ def _fmt_slot(when: datetime, locale: str) -> str:
     return when.strftime("%H:%M %d/%m/%Y")
 
 
+def _remember_details(db: Session, conv: Conversation, state: dict, *,
+                      service=None, doctor=None, date=None, time=None,
+                      phone=None, name=None) -> None:
+    """Keep what the patient told us, even on a turn we are not answering.
+
+    Nothing is activated here — this is memory, not intent. A patient who
+    mentions "sáng thứ 3 tuần sau" while asking a question has not asked to
+    book; but when they do, the flow should already know, instead of asking for
+    a date it was told two messages ago.
+    """
+    learnt = {}
+    if service and service.id != state.get("service_id"):
+        learnt["service_id"] = service.id
+    if doctor and doctor.id != state.get("doctor_id"):
+        learnt["doctor_id"] = doctor.id
+        learnt["doctor_requested"] = True
+    if date and date != state.get("date"):
+        learnt["date"] = date
+    if time and time != state.get("time"):
+        learnt["time"] = time
+    if phone:
+        learnt["phone"] = phone
+    if name:
+        learnt["full_name"] = name
+    if not learnt:
+        return
+
+    conv.booking_state = {**state, **learnt}
+    db.commit()
+
+
 def handle_booking(db: Session, conv: Conversation, user_message: str) -> Optional[str]:
     """
     Advance the booking state machine with a new patient message.
@@ -399,7 +440,31 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     locale = locale_for_conversation(conv, None)
     has_intent = any(kw in text_folded for kw in BOOKING_INTENT_KEYWORDS)
 
+    # Read what the patient said before deciding whether to answer, so details
+    # given while the assistant was doing the talking are not lost.
+    #
+    # The two halves of this product remember separately: the model carries the
+    # conversation, the state machine carries the booking. A patient who says
+    # "sáng thứ 3 tuần sau với bác sĩ C" during a turn the model handles used to
+    # have all of it evaporate — and when the state machine finally engaged it
+    # asked for the date as though nothing had been said. Which is exactly what
+    # "AI không nhớ" looks like from the other side of the screen.
+    new_service = _resolve_service(db, conv.clinic_id, text_lower, locale)
+    new_doctor = _resolve_doctor(db, conv.clinic_id, user_message)
+    # "Đúng" answers the question we just asked. Offering a choice the flow
+    # cannot accept is how a conversation goes round three times without
+    # deciding anything — which is what "hỏi đi hỏi lại" looks like.
+    releases_doctor = bool(state.get("doctor_requested")) and (
+        bool(_ANY_DOCTOR.search(text_folded))
+        or (bool(state.get("other_doctor_offered")) and _is_affirmative(text_folded)))
+    new_date = _parse_date(text_lower)
+    new_time = _parse_time(text_lower)
+    new_phone = _parse_phone(user_message)
+    new_name = _parse_name(user_message)
+
     if not state.get("active") and not has_intent:
+        _remember_details(db, conv, state, service=new_service, doctor=new_doctor,
+                          date=new_date, time=new_time, phone=new_phone, name=new_name)
         return None
 
     # Cancel the flow
@@ -408,14 +473,6 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         db.commit()
         return _say(locale, "Dạ, tôi đã hủy yêu cầu đặt lịch. Nếu bạn cần hỗ trợ thêm, cứ nhắn cho tôi nhé!", "Your booking request has been cancelled. Please message me if you need further help.", "予約リクエストをキャンセルしました。ほかにお手伝いできることがあればお知らせください。")
 
-    # Extract entities from this message
-    new_service = _resolve_service(db, conv.clinic_id, text_lower, locale)
-    new_doctor = _resolve_doctor(db, conv.clinic_id, user_message)
-    releases_doctor = bool(state.get("doctor_requested")) and bool(_ANY_DOCTOR.search(text_folded))
-    new_date = _parse_date(text_lower)
-    new_time = _parse_time(text_lower)
-    new_phone = _parse_phone(user_message)
-    new_name = _parse_name(user_message)
 
     # A message that carries no booking information is not advancing the
     # booking, whatever else it is — so the assistant should answer it instead of
@@ -447,6 +504,10 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         db.commit()
         label = _doctor_label(asked_about.name)
         if not free:
+            # Remember the question, so a plain "đúng" can answer it.
+            state["other_doctor_offered"] = True
+            conv.booking_state = state
+            db.commit()
             return (f"Trong 2 tuần tới {label} chưa có lịch trống ạ. "
                     f"Bạn muốn để tôi xếp bác sĩ khác cùng chuyên môn không ạ?")
         listed = ", ".join(_fmt_date(day.isoformat(), locale) for day, _ in free[:6])
@@ -464,10 +525,15 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
     if state.get("active") and mid_flow and not has_intent and not adds_new \
             and not _is_affirmative(text_folded) \
             and not (state.get("proposed_slots") and re.fullmatch(r"\s*\d\s*\.?\s*", user_message)):
+        _remember_details(db, conv, state, service=new_service, doctor=new_doctor,
+                          date=new_date, time=new_time, phone=new_phone, name=new_name)
         return None
 
     if not state.get("active"):
-        state = {"active": True}
+        # Merge rather than replace. Wiping here threw away everything the
+        # patient had already said while the model was answering — the service,
+        # the doctor, the day — and the flow then asked for all of it again.
+        state = {**state, "active": True}
 
     if new_service:
         state["service_id"] = new_service.id
@@ -477,6 +543,7 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
         # ever, because the answer it offered had no handler.
         state.pop("doctor_id", None)
         state.pop("doctor_requested", None)
+        state.pop("other_doctor_offered", None)
         state.pop("proposed_slots", None)
         state.pop("slot", None)
     elif new_doctor and new_doctor.id != state.get("doctor_id"):
@@ -608,10 +675,26 @@ def handle_booking(db: Session, conv: Conversation, user_message: str) -> Option
             db.commit()
             label = _doctor_label(named.name) if named else "bác sĩ bạn chọn"
             when = _fmt_date(target_date.isoformat(), locale)
+
+            # Name the days that doctor *is* free rather than asking the patient
+            # to guess again. "Bạn cho tôi xin một ngày khác" invites another
+            # wrong guess, and the same refusal — which is how a conversation
+            # goes round three times without deciding anything.
+            free_days = [d for d, count in days_with_availability(
+                db, conv.clinic_id, clock.today(), _FREE_DAYS_HORIZON,
+                service.duration_minutes, branch_id=conv.branch_id,
+                doctor_id=requested_doctor_id) if count]
+            if free_days:
+                listed = ", ".join(_fmt_date(d.isoformat(), locale) for d in free_days[:5])
+                return (f"Rất tiếc {when} {label} không có lịch ạ. "
+                        f"{label} còn trống các ngày: {listed}.\n"
+                        f"Bạn chọn ngày nào ạ?")
             if any_slots:
-                return (f"Rất tiếc {when} {label} đã kín lịch ạ. "
-                        f"Bạn muốn chọn ngày khác với {label}, "
-                        f"hay để tôi xếp bác sĩ khác cũng chuyên môn này ạ?")
+                state["other_doctor_offered"] = True
+                conv.booking_state = state
+                db.commit()
+                return (f"Trong 2 tuần tới {label} chưa có lịch trống ạ. "
+                        f"Bạn muốn để tôi xếp bác sĩ khác cùng chuyên môn không ạ?")
             return (f"Rất tiếc {when} {label} không có ca làm việc ạ. "
                     f"Bạn cho tôi xin một ngày khác nhé?")
 
