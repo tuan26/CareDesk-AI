@@ -41,8 +41,9 @@ from sqlalchemy.orm import Session
 
 from backend.app.core import clock
 from backend.app.models.models import (
-    Appointment, BookingRequest, Clinic, Conversation, DomainEvent, PatientLead,
-    PatientPackage, RevenueOpportunity, RevenueRecord, Service, ServicePackage,
+    Appointment, BookingRequest, Clinic, Conversation, DomainEvent, Message,
+    PatientLead, PatientPackage, RevenueAction, RevenueOpportunity, RevenueRecord,
+    Service, ServicePackage,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,28 @@ BASE_RATES = {
 #: noise — 3 out of 4 is not a 75% conversion rate.
 MIN_RESOLVED_FOR_OWN_RATE = 20
 
+# --- attribution ------------------------------------------------------------
+
+DIRECT = "direct"
+ASSISTED = "assisted"
+ORGANIC = "organic"
+UNKNOWN = "unknown"
+
+ATTRIBUTION_LABELS = {
+    DIRECT: "Trực tiếp",
+    ASSISTED: "Gián tiếp",
+    ORGANIC: "Tự quay lại",
+    UNKNOWN: "Không xác định",
+}
+
+#: Booked within this many days of first contact: the message is the
+#: straightforward explanation.
+DIRECT_WINDOW_DAYS = 3
+#: Past this a booking is not attributable to a message at all. Without a
+#: ceiling every patient who ever returns eventually credits some opportunity,
+#: and recovered revenue grows on its own.
+ATTRIBUTION_WINDOW_DAYS = 30
+
 #: Share of opportunities deliberately left uncontacted, to measure lift.
 HOLDOUT_RATE = 0.10
 #: Below this, the holdout cannot support a claim and none is made.
@@ -124,6 +147,7 @@ LOSS_REASONS = {
     "unhappy": "Không hài lòng lần trước",
     "no_need": "Không còn nhu cầu",
     "unreachable": "Không liên lạc được",
+    "no_show": "Đặt lịch rồi không đến",
     "wrong_target": "Không đúng đối tượng",
 }
 
@@ -651,39 +675,204 @@ def detect_high_intent_lost_leads(db: Session, clinic_id: int, clinic: Clinic) -
     return found
 
 
-def close_stale_opportunities(db: Session, clinic_id: int) -> int:
-    """An open opportunity whose patient came back anyway is recovered, not open.
+def _match_strength(opportunity: RevenueOpportunity, appointment: Appointment) -> tuple:
+    """Which of a patient's open opportunities gets to claim one booking.
 
-    Runs before detection so the same visit is not counted as both a recovery
-    and a fresh miss. Note this credits the *opportunity*, not the product —
-    whether the visit happened because of a message is what the holdout answers.
+    Ordered by how defensible the claim is, not by how much it is worth —
+    picking the most valuable would quietly bias every recovery figure upwards.
+    Fully deterministic, so the same booking never flips between opportunities
+    on a later pass.
+    """
+    same_service = opportunity.service_id is not None and \
+        opportunity.service_id == appointment.service_id
+    contacted = opportunity.contacted_at is not None
+    when = _naive(opportunity.contacted_at) or _naive(opportunity.detected_at) or datetime.min
+    return (same_service, contacted, when, opportunity.id)
+
+
+def _classify(opportunity: RevenueOpportunity, booked_at: datetime) -> str:
+    """Direct, assisted, organic or unknown — how honest the credit is.
+
+    A patient nobody contacted who books anyway is ``organic``: the baseline the
+    holdout exists to measure, and never revenue the product may claim. A
+    booking landing months after the only message is ``unknown``, because at
+    that distance the message is a story rather than a cause.
+    """
+    contacted = _naive(opportunity.contacted_at)
+    if not contacted:
+        return ORGANIC
+    gap = (booked_at - contacted).days
+    if gap < 0:
+        # Booked before anyone wrote to them. Whatever brought them in, not us.
+        return ORGANIC
+    if gap <= DIRECT_WINDOW_DAYS:
+        return DIRECT
+    if gap <= ATTRIBUTION_WINDOW_DAYS:
+        return ASSISTED
+    return UNKNOWN
+
+
+def _settle_booked(db: Session, clinic_id: int) -> int:
+    """Move bookings on to whatever actually happened to them.
+
+    This is where "recovered" earns its name. An opportunity stays ``booked``
+    until the visit is completed *and* revenue exists for it; a booking that was
+    cancelled or no-showed goes to ``lost``, not quietly back to open. The
+    amount is always money that was recorded, never the estimate — the estimate
+    is what we hoped for, and putting it in the recovered column is how a
+    dashboard ends up disagreeing with the bank.
     """
     now = clock.now()
-    closed = 0
+    settled = 0
 
     for opportunity in db.query(RevenueOpportunity).filter(
         RevenueOpportunity.clinic_id == clinic_id,
-        RevenueOpportunity.status.in_(("open", "contacted")),
+        RevenueOpportunity.status == "booked",
+        RevenueOpportunity.resolved_appointment_id != None,  # noqa: E711
     ).all():
-        booked = db.query(Appointment).filter(
-            Appointment.patient_id == opportunity.patient_id,
-            Appointment.created_at >= opportunity.detected_at,
-            Appointment.status.in_(("pending", "awaiting_deposit", "confirmed", "completed")),
-        ).order_by(Appointment.id.asc()).first()
-        if not booked:
+        appointment = db.get(Appointment, opportunity.resolved_appointment_id)
+        if not appointment:
             continue
+
+        if appointment.status in ("cancelled", "no_show"):
+            opportunity.status = "lost"
+            opportunity.loss_reason = "no_show"
+            opportunity.resolved_at = now
+            settled += 1
+            continue
+
+        if appointment.status != "completed":
+            continue
+
+        record = db.query(RevenueRecord).filter(
+            RevenueRecord.appointment_id == appointment.id
+        ).order_by(RevenueRecord.id.asc()).first()
 
         opportunity.status = "recovered"
         opportunity.resolved_at = now
-        opportunity.resolved_appointment_id = booked.id
-        revenue = db.query(func.sum(RevenueRecord.amount)).filter(
-            RevenueRecord.appointment_id == booked.id
-        ).scalar()
-        # Not yet completed means no revenue recorded yet; the estimate stands in
-        # and is replaced the moment real money lands.
-        opportunity.recovered_amount = float(revenue) if revenue else float(opportunity.estimated_value or 0)
-        closed += 1
-    return closed
+        if record:
+            opportunity.recovered_amount = float(record.amount or 0)
+            opportunity.resolved_revenue_record_id = record.id
+        else:
+            # Completed against a package the patient had already paid for. The
+            # visit happened and the opportunity is genuinely recovered, but it
+            # brought in no new money and must not pretend otherwise.
+            opportunity.recovered_amount = 0.0
+        settled += 1
+
+    return settled
+
+
+def _credit_new_bookings(db: Session, clinic_id: int) -> int:
+    """Tie each new booking to exactly one opportunity.
+
+    The bug this replaces: a patient overdue for a revisit who had also left a
+    booking request and once no-showed carried three open opportunities, and a
+    single 2.000.000d appointment closed all three as recovered — 6.000.000d on
+    the dashboard for one visit. One booking is one recovery. The others were
+    real misses, so they are not deleted; they are marked ``superseded`` and
+    left out of both the revenue and the conversion maths.
+    """
+    now = clock.now()
+    credited = 0
+
+    live = db.query(RevenueOpportunity).filter(
+        RevenueOpportunity.clinic_id == clinic_id,
+        RevenueOpportunity.status.in_(("open", "contacted")),
+    ).all()
+
+    by_patient: Dict[int, List[RevenueOpportunity]] = {}
+    for opportunity in live:
+        by_patient.setdefault(opportunity.patient_id, []).append(opportunity)
+
+    for patient_id, opportunities in by_patient.items():
+        earliest = min((_naive(o.detected_at) or now) for o in opportunities)
+        appointment = db.query(Appointment).filter(
+            Appointment.patient_id == patient_id,
+            Appointment.created_at >= earliest,
+            Appointment.status.in_(("pending", "awaiting_deposit", "confirmed", "completed")),
+        ).order_by(Appointment.id.asc()).first()
+        if not appointment:
+            continue
+
+        booked_at = _naive(appointment.created_at) or now
+        # An opportunity detected after the booking was made cannot have caused
+        # it, and stays open — the patient may still owe that visit.
+        eligible = [o for o in opportunities if (_naive(o.detected_at) or now) <= booked_at]
+        if not eligible:
+            continue
+
+        winner = max(eligible, key=lambda o: _match_strength(o, appointment))
+        winner.status = "booked"
+        winner.booked_at = booked_at
+        winner.resolved_appointment_id = appointment.id
+        winner.attribution_class = _classify(winner, booked_at)
+        credited += 1
+
+        for other in eligible:
+            if other.id == winner.id:
+                continue
+            other.status = "superseded"
+            other.resolved_at = now
+            other.resolved_appointment_id = appointment.id
+
+    return credited
+
+
+def detect_responses(db: Session, clinic_id: int) -> int:
+    """Mark an action answered when the patient actually wrote back.
+
+    Read from their own messages rather than asked of staff: "did they reply" is
+    the one funnel step nobody remembers to record, and an unrecorded reply
+    makes every message look ignored.
+    """
+    answered = 0
+    pending = db.query(RevenueAction).filter(
+        RevenueAction.clinic_id == clinic_id,
+        RevenueAction.status == "sent",
+    ).all()
+
+    for action in pending:
+        opportunity = db.get(RevenueOpportunity, action.opportunity_id)
+        if not opportunity:
+            continue
+        sent_at = _naive(action.created_at)
+        if not sent_at:
+            continue
+        reply = db.query(Message).join(
+            Conversation, Message.conversation_id == Conversation.id
+        ).filter(
+            Conversation.patient_id == opportunity.patient_id,
+            Message.sender == "user",
+            Message.created_at >= sent_at,
+        ).order_by(Message.id.asc()).first()
+        if not reply:
+            continue
+        action.status = "responded"
+        action.responded_at = _naive(reply.created_at)
+        answered += 1
+
+    return answered
+
+
+def record_action(db: Session, opportunity: RevenueOpportunity, channel: str,
+                  message: Optional[str] = None, template_code: Optional[str] = None,
+                  user_id: Optional[int] = None) -> RevenueAction:
+    """Log that a human reached out. Sends nothing."""
+    action = RevenueAction(
+        clinic_id=opportunity.clinic_id, opportunity_id=opportunity.id,
+        channel=channel, template_code=template_code,
+        message=message if message is not None else opportunity.recommended_message,
+        created_by_user_id=user_id, status="sent",
+    )
+    db.add(action)
+    if opportunity.status == "open":
+        opportunity.status = "contacted"
+    # First contact is what attribution measures from; later nudges do not
+    # restart the clock and make an old lead look freshly won.
+    if opportunity.contacted_at is None:
+        opportunity.contacted_at = clock.now()
+    return action
 
 
 def run_detection(db: Session, clinic_id: int) -> Dict[str, int]:
@@ -692,7 +881,15 @@ def run_detection(db: Session, clinic_id: int) -> Dict[str, int]:
     if not clinic:
         return {}
 
-    result = {"closed": close_stale_opportunities(db, clinic_id)}
+    # Attribution runs before detection, in this order on purpose. Settling
+    # first means a visit that already happened is credited to the opportunity
+    # that was waiting for it, instead of being detected all over again as a
+    # fresh miss on the next line.
+    result = {
+        "settled": _settle_booked(db, clinic_id),
+        "credited": _credit_new_bookings(db, clinic_id),
+        "responded": detect_responses(db, clinic_id),
+    }
     result[OVERDUE_REVISIT] = detect_overdue_revisits(db, clinic_id, clinic)
     packages = detect_package_opportunities(db, clinic_id, clinic)
     result[PACKAGE_EXPIRING] = packages  # split reported per-type by the API
@@ -753,23 +950,34 @@ def leakage_summary(db: Session, clinic_id: int) -> Dict[str, Any]:
     }
 
 
+#: Statuses meaning the patient came back. Booked is not yet money, but it is
+#: unambiguously a return, which is what a conversion rate measures.
+_CONVERTED = ("booked", "recovered")
+
+
 def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[str, Any]:
     """What CareDesk can honestly claim, measured against the holdout.
 
-    ``gross_recovered`` is every contacted opportunity that converted. Some of
-    those patients were coming back regardless, so that figure flatters the
-    product and is labelled as such.
+    ``gross_recovered`` is money recorded against every contacted opportunity
+    that converted. Some of those patients were coming back regardless, so that
+    figure flatters the product and is labelled as such.
 
     ``net_attributable`` is the part the holdout says would not have happened
     otherwise. When the holdout is too small to mean anything the field is None
     and ``measurable`` is False — no estimate is offered in its place, because
     an unmeasurable claim dressed up as a measured one is the failure mode this
     whole design exists to avoid.
+
+    ``superseded`` opportunities are excluded from both sides. They are the
+    other misses belonging to a patient whose single booking was already
+    credited elsewhere; counting them as won would inflate the rate, counting
+    them as lost would deflate it, and they are evidence of neither.
     """
     since = clock.now() - timedelta(days=days)
     base = db.query(RevenueOpportunity).filter(
         RevenueOpportunity.clinic_id == clinic_id,
         RevenueOpportunity.detected_at >= since,
+        RevenueOpportunity.status != "superseded",
     )
 
     def split(is_holdout: bool):
@@ -777,9 +985,12 @@ def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[st
         # The holdout is never contacted, so its denominator is everything
         # detected; the treated group's is everything actually reached.
         eligible = [o for o in rows if is_holdout or o.contacted_at is not None]
-        recovered = [o for o in eligible if o.status == "recovered"]
-        amount = sum(float(o.recovered_amount or 0) for o in recovered)
-        return len(eligible), len(recovered), amount
+        won = [o for o in eligible if o.status in _CONVERTED]
+        # Money, not bookings: only a completed visit with a revenue record has
+        # an amount, and everything else contributes zero rather than its hope.
+        amount = sum(float(o.recovered_amount or 0) for o in eligible
+                     if o.status == "recovered")
+        return len(eligible), len(won), amount
 
     treated_n, treated_won, treated_amount = split(False)
     holdout_n, holdout_won, _ = split(True)
@@ -799,8 +1010,7 @@ def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[st
         "window_days": days,
         "contacted": treated_n,
         "recovered_count": treated_won,
-        # Everything that converted after contact — includes patients who would
-        # have returned anyway. Not a claim of causation.
+        # Includes patients who would have returned anyway. Not causation.
         "gross_recovered": treated_amount,
         "treated_conversion": treated_rate,
         "holdout_size": holdout_n,
@@ -816,6 +1026,143 @@ def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[st
         ),
         "subscription_cost": fee,
         "roi": (net / fee) if (measurable and net is not None and fee > 0) else None,
+    }
+
+
+def recovery_funnel(db: Session, clinic_id: int, days: int = 30) -> Dict[str, Any]:
+    """Contacted -> responded -> booked -> completed, and the money at the end.
+
+    Every step is counted from a record of something that happened: an action
+    row for the contact, the patient's own message for the reply, an appointment
+    for the booking, a revenue record for the money. No step is inferred from
+    the one before it, which is why the drop between any two of them is worth
+    reading.
+    """
+    since = clock.now() - timedelta(days=days)
+
+    opportunities = db.query(RevenueOpportunity).filter(
+        RevenueOpportunity.clinic_id == clinic_id,
+        RevenueOpportunity.detected_at >= since,
+        RevenueOpportunity.is_holdout == False,  # noqa: E712
+        RevenueOpportunity.status != "superseded",
+    ).all()
+    ids = [o.id for o in opportunities]
+
+    contacted = [o for o in opportunities if o.contacted_at is not None]
+    responded = db.query(func.count(func.distinct(RevenueAction.opportunity_id))).filter(
+        RevenueAction.opportunity_id.in_(ids or [0]),
+        RevenueAction.status == "responded",
+    ).scalar() or 0
+    booked = [o for o in contacted if o.status in _CONVERTED]
+    completed = [o for o in contacted if o.status == "recovered"]
+
+    detected_value = sum(float(o.estimated_value or 0) for o in opportunities
+                         if VALUE_KIND.get(o.opportunity_type) == NEW_REVENUE)
+
+    return {
+        "window_days": days,
+        "detected": len(opportunities),
+        "detected_value": detected_value,
+        "contacted": len(contacted),
+        "responded": int(responded),
+        "booked": len(booked),
+        "completed": len(completed),
+        "revenue_recovered": sum(float(o.recovered_amount or 0) for o in completed),
+    }
+
+
+def attribution_summary(db: Session, clinic_id: int, days: int = 30) -> Dict[str, Any]:
+    """Recovered money split by how defensible the credit is.
+
+    Four buckets, and only the first two are the product's work:
+
+    * **direct** — booked within days of being contacted.
+    * **assisted** — booked later, still inside the attribution window. Real,
+      but a weaker claim, so it is shown apart rather than folded in.
+    * **organic** — never contacted and came back anyway. This is the clinic's
+      own baseline; presenting it as recovered revenue would be the central lie
+      this feature is built to avoid.
+    * **unknown** — outside the window, or credited before attribution existed.
+      Reported so the total reconciles, never counted as recovered.
+
+    The holdout is reported separately again, because organic and holdout
+    answer different questions: organic is "came back without a message",
+    holdout is "was deliberately not sent one".
+    """
+    since = clock.now() - timedelta(days=days)
+    rows = db.query(RevenueOpportunity).filter(
+        RevenueOpportunity.clinic_id == clinic_id,
+        RevenueOpportunity.detected_at >= since,
+        RevenueOpportunity.status == "recovered",
+    ).all()
+
+    buckets = {
+        key: {"class": key, "label": ATTRIBUTION_LABELS[key], "count": 0, "revenue": 0.0}
+        for key in (DIRECT, ASSISTED, ORGANIC, UNKNOWN)
+    }
+    for opportunity in rows:
+        key = opportunity.attribution_class or UNKNOWN
+        bucket = buckets.setdefault(
+            key, {"class": key, "label": ATTRIBUTION_LABELS.get(key, key),
+                  "count": 0, "revenue": 0.0})
+        bucket["count"] += 1
+        bucket["revenue"] += float(opportunity.recovered_amount or 0)
+
+    holdout = [o for o in rows if o.is_holdout]
+
+    return {
+        "window_days": days,
+        "buckets": list(buckets.values()),
+        # The only figure that may be described as revenue CareDesk recovered,
+        # and even then only alongside the lift measurement.
+        "attributable_revenue": buckets[DIRECT]["revenue"] + buckets[ASSISTED]["revenue"],
+        "organic_revenue": buckets[ORGANIC]["revenue"],
+        "holdout_revenue": sum(float(o.recovered_amount or 0) for o in holdout),
+        "holdout_count": len(holdout),
+        "direct_window_days": DIRECT_WINDOW_DAYS,
+        "attribution_window_days": ATTRIBUTION_WINDOW_DAYS,
+    }
+
+
+def attribution_chain(db: Session, opportunity: RevenueOpportunity) -> Dict[str, Any]:
+    """The whole trace for one opportunity, so a number can be argued with.
+
+    Opportunity -> action -> booking -> appointment -> revenue record. An owner
+    who does not believe a figure should be able to follow it to the visit and
+    the receipt, otherwise "recovered revenue" is something they either take on
+    faith or ignore.
+    """
+    actions = db.query(RevenueAction).filter(
+        RevenueAction.opportunity_id == opportunity.id
+    ).order_by(RevenueAction.id.asc()).all()
+
+    appointment = db.get(Appointment, opportunity.resolved_appointment_id) \
+        if opportunity.resolved_appointment_id else None
+    record = db.get(RevenueRecord, opportunity.resolved_revenue_record_id) \
+        if opportunity.resolved_revenue_record_id else None
+
+    return {
+        "opportunity_id": opportunity.id,
+        "type": opportunity.opportunity_type,
+        "status": opportunity.status,
+        "attribution_class": opportunity.attribution_class,
+        "is_holdout": opportunity.is_holdout,
+        "detected_at": opportunity.detected_at,
+        "actions": [{
+            "id": a.id, "channel": a.channel, "template_code": a.template_code,
+            "status": a.status, "sent_at": a.created_at, "responded_at": a.responded_at,
+        } for a in actions],
+        "booking_request_id": opportunity.resolved_booking_request_id,
+        "appointment": {
+            "id": appointment.id, "status": appointment.status,
+            "start_time": appointment.start_time,
+        } if appointment else None,
+        "revenue_record": {
+            "id": record.id, "amount": record.amount, "recorded_at": record.recorded_at,
+        } if record else None,
+        # Never the estimate. If no money was recorded this is None, and the
+        # screen has to say so rather than showing what we hoped for.
+        "revenue_recovered": opportunity.recovered_amount,
     }
 
 

@@ -289,9 +289,13 @@ def test_an_opportunity_already_acted_on_is_not_reopened(db, clinic, repeating_s
     assert db.query(RevenueOpportunity).count() == 1
 
 
-def test_a_patient_who_rebooked_is_closed_as_recovered(db, clinic, repeating_service):
+def test_a_patient_who_rebooked_leaves_the_queue_as_booked(db, clinic, repeating_service):
     """Left open, the same visit would be counted as a miss forever and the
-    queue would fill with people who already came back."""
+    queue would fill with people who already came back.
+
+    Booked, not recovered: they have an appointment, not a receipt. See
+    tests/test_revenue_attribution.py for where the money is finally counted.
+    """
     patient = _patient(db, clinic)
     _visit(db, clinic, patient, repeating_service, days_ago=60)
     rr.run_detection(db, clinic.id)
@@ -300,8 +304,10 @@ def test_a_patient_who_rebooked_is_closed_as_recovered(db, clinic, repeating_ser
     rr.run_detection(db, clinic.id)
 
     opportunity = db.query(RevenueOpportunity).first()
-    assert opportunity.status == "recovered"
+    assert opportunity.status == "booked"
     assert opportunity.resolved_appointment_id is not None
+    assert opportunity.recovered_amount is None, "chưa khám xong thì chưa có tiền"
+    assert opportunity not in rr.money_queue(db, clinic.id)
 
 
 # --- the numbers explain themselves ------------------------------------------

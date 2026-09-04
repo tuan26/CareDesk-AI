@@ -9,6 +9,9 @@ const CHANNEL = { zalo: 'Zalo', sms: 'SMS', call: 'Gọi điện' };
 export default function MoneyPage() {
   const [leakage, setLeakage] = useState(null);
   const [performance, setPerformance] = useState(null);
+  const [funnel, setFunnel] = useState(null);
+  const [attribution, setAttribution] = useState(null);
+  const [chain, setChain] = useState(null);
   const [queue, setQueue] = useState([]);
   const [reasons, setReasons] = useState([]);
   const [services, setServices] = useState([]);
@@ -24,9 +27,11 @@ export default function MoneyPage() {
     setLoading(true);
     try {
       const suffix = filter ? `?type=${filter}` : '';
-      const [leak, perf, q, reasonList, serviceList] = await Promise.all([
+      const [leak, perf, fun, attr, q, reasonList, serviceList] = await Promise.all([
         fetch(`${API_BASE}/revenue/leakage`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/performance`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE}/revenue/funnel`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE}/revenue/attribution`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/queue${suffix}`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/loss-reasons`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/services/revisit-intervals`, { headers: getAuthHeaders() }),
@@ -34,6 +39,8 @@ export default function MoneyPage() {
       if (!leak.ok) throw new Error('Không tải được số liệu thất thoát.');
       setLeakage(await leak.json());
       setPerformance(perf.ok ? await perf.json() : null);
+      setFunnel(fun.ok ? await fun.json() : null);
+      setAttribution(attr.ok ? await attr.json() : null);
       setQueue(q.ok ? (await q.json()).items : []);
       setReasons(reasonList.ok ? await reasonList.json() : []);
       setServices(serviceList.ok ? await serviceList.json() : []);
@@ -80,6 +87,12 @@ export default function MoneyPage() {
     });
     if (res.ok) setServices((list) => list.map((s) => (s.id === service.id ? { ...s, revisit_interval_days: days } : s)));
     else setError('Chỉ chủ phòng khám mới đổi được chu kỳ tái khám.');
+  };
+
+  const openChain = async (item) => {
+    const res = await fetch(`${API_BASE}/revenue/opportunities/${item.id}/chain`, { headers: getAuthHeaders() });
+    if (res.ok) setChain({ ...(await res.json()), patientName: item.patient.name });
+    else setError('Không tải được chuỗi truy vết.');
   };
 
   const copyMessage = (item) => {
@@ -167,6 +180,57 @@ export default function MoneyPage() {
         </div>
       </div>}
 
+      {/* --- the outreach funnel ------------------------------------------ */}
+      {funnel && <div className="card" style={{ padding: 16, marginBottom: 18 }}>
+        <h3 style={{ margin: '0 0 4px' }}>Từ liên hệ tới tiền ({funnel.window_days} ngày qua)</h3>
+        <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)', marginBottom: 12 }}>
+          Mỗi bước đếm từ dữ liệu riêng của nó, không suy ra từ bước trước — nên khoảng rơi giữa hai bước là thật.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+          {[
+            ['Phát hiện', funnel.detected],
+            ['Đã liên hệ', funnel.contacted],
+            ['Có phản hồi', funnel.responded],
+            ['Đã đặt lịch', funnel.booked],
+            ['Đã đến khám', funnel.completed],
+          ].map(([label, value]) => <div key={label} style={{ textAlign: 'center', padding: '10px 6px', background: 'var(--bg-subtle, #f8fafc)', borderRadius: 8 }}>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>{label}</div>
+          </div>)}
+          <div style={{ textAlign: 'center', padding: '10px 6px', background: 'var(--bg-subtle, #f8fafc)', borderRadius: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{money(funnel.revenue_recovered)}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>Tiền đã thu</div>
+          </div>
+        </div>
+      </div>}
+
+      {/* --- who gets the credit ------------------------------------------- */}
+      {attribution && <div className="card-table-wrapper" style={{ marginBottom: 18 }}>
+        <div className="card-header"><h2>Tiền thu về, chia theo mức độ chắc chắn</h2></div>
+        <table className="custom-table">
+          <thead><tr><th>Loại</th><th>Số ca</th><th>Doanh thu</th><th>Được tính cho CareDesk?</th></tr></thead>
+          <tbody>
+            {attribution.buckets.map((bucket) => <tr key={bucket.class}>
+              <td><b>{bucket.label}</b><br /><small style={{ color: 'var(--text-muted, #64748b)' }}>
+                {bucket.class === 'direct' && `Đặt lịch trong ${attribution.direct_window_days} ngày sau khi liên hệ`}
+                {bucket.class === 'assisted' && `Đặt lịch muộn hơn, trong ${attribution.attribution_window_days} ngày`}
+                {bucket.class === 'organic' && 'Không hề liên hệ, khách tự quay lại'}
+                {bucket.class === 'unknown' && 'Ngoài cửa sổ quy kết, hoặc thiếu dữ liệu'}
+              </small></td>
+              <td>{bucket.count}</td>
+              <td>{money(bucket.revenue)}</td>
+              <td>{['direct', 'assisted'].includes(bucket.class)
+                ? <span className="badge completed">Có</span>
+                : <span className="badge pending">Không</span>}</td>
+            </tr>)}
+          </tbody>
+        </table>
+        <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-muted, #64748b)' }}>
+          Chỉ <b>{money(attribution.attributable_revenue)}</b> được phép gọi là doanh thu CareDesk mang về.
+          {' '}{money(attribution.organic_revenue)} là khách tự quay lại — hiện ở đây để tổng khớp, không phải để cộng vào.
+        </div>
+      </div>}
+
       {/* --- buckets ------------------------------------------------------ */}
       <div className="card-table-wrapper" style={{ marginBottom: 18 }}>
         <div className="card-header"><h2>Tiền rơi ở đâu</h2></div>
@@ -219,6 +283,7 @@ export default function MoneyPage() {
                 <button className="btn btn-secondary btn-sm" onClick={() => copyMessage(item)}>Chép tin nhắn</button>
                 {item.status === 'open' && <button className="btn btn-primary btn-sm" onClick={() => markContacted(item)}>Đã liên hệ</button>}
                 <button className="btn btn-secondary btn-sm" onClick={() => { setSelected(item); setOutcome({ outcome: 'recovered', loss_reason: 'price' }); }}>Kết quả</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => openChain(item)}>Truy vết</button>
               </div></td>
             </tr>)}
             {queue.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center' }}>Không còn việc nào trong nhóm này.</td></tr>}
@@ -257,6 +322,41 @@ export default function MoneyPage() {
             <button type="submit" className="btn btn-primary" disabled={busy}>Lưu</button>
           </div>
         </form>
+      </div>
+    </div>}
+
+    {/* --- the attribution chain ----------------------------------------- */}
+    {chain && <div className="modal-overlay" onClick={() => setChain(null)}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header"><h3>Truy vết: {chain.patientName}</h3>
+          <button className="modal-close-btn" onClick={() => setChain(null)}>&times;</button></div>
+        <div className="modal-body">
+          <p style={{ fontSize: 13, color: 'var(--text-muted, #64748b)' }}>
+            Con số nào cũng phải lần ngược được tới buổi khám và phiếu thu, nếu không thì chỉ còn cách tin hoặc bỏ qua.
+          </p>
+          <table className="custom-table">
+            <tbody>
+              <tr><td>Cơ hội</td><td>#{chain.opportunity_id} · {chain.status}
+                {chain.is_holdout && <span className="badge pending" style={{ marginLeft: 6 }}>Nhóm đối chứng</span>}</td></tr>
+              {chain.actions.map((a) => <tr key={a.id}>
+                <td>Liên hệ #{a.id}</td>
+                <td>{CHANNEL[a.channel] || a.channel}
+                  {a.template_code && ` · ${a.template_code}`}
+                  {a.responded_at ? ' · khách đã trả lời' : ' · chưa thấy phản hồi'}</td>
+              </tr>)}
+              {chain.actions.length === 0 && <tr><td>Liên hệ</td><td style={{ color: 'var(--text-muted, #64748b)' }}>Chưa liên hệ lần nào</td></tr>}
+              <tr><td>Lịch hẹn</td><td>{chain.appointment ? `#${chain.appointment.id} · ${chain.appointment.status}` : '—'}</td></tr>
+              <tr><td>Phiếu thu</td><td>{chain.revenue_record ? `#${chain.revenue_record.id} · ${money(chain.revenue_record.amount)}` : '—'}</td></tr>
+              <tr><td><b>Tiền thu về</b></td><td><b>{chain.revenue_recovered === null ? 'Chưa có' : money(chain.revenue_recovered)}</b></td></tr>
+              <tr><td>Quy kết</td><td>{chain.attribution_class
+                ? { direct: 'Trực tiếp', assisted: 'Gián tiếp', organic: 'Khách tự quay lại', unknown: 'Không xác định' }[chain.attribution_class]
+                : '—'}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={() => setChain(null)}>Đóng</button>
+        </div>
       </div>
     </div>}
 

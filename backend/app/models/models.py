@@ -872,8 +872,34 @@ class RevenueOpportunity(Base):
     recommended_offer = Column(String, nullable=True)
 
     status = Column(String, nullable=False, default="open", index=True)
-    # open | contacted | recovered | lost | dismissed | expired
+    # open | contacted | booked | recovered | lost | dismissed | superseded
+    #
+    # "booked" and "recovered" are deliberately different states. A patient who
+    # has made an appointment has not yet paid the clinic anything, and the
+    # month they book is often not the month they turn up. Counting the booking
+    # as recovered revenue is the difference between the owner's dashboard and
+    # the owner's bank account.
+    #
+    # "superseded" exists because one patient can carry several open
+    # opportunities at once — overdue for a revisit, a booking request nobody
+    # rang back, a no-show. When they finally book, exactly one opportunity is
+    # credited and the rest are superseded: real misses, but not three separate
+    # recoveries of the same visit. They are excluded from conversion rates and
+    # from revenue entirely, because they are evidence of neither.
     is_holdout = Column(Boolean, nullable=False, default=False, index=True)
+
+    #: How much of the credit this opportunity may claim. See
+    #: services/revenue_recovery.py for the windows.
+    #: direct   — booked soon after we contacted them
+    #: assisted — booked later, inside the attribution window
+    #: organic  — never contacted, came back anyway (the baseline)
+    #: unknown  — outside the window, or nothing to tie it to. Never counted.
+    attribution_class = Column(String, nullable=True, index=True)
+    booked_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_booking_request_id = Column(Integer, ForeignKey("booking_requests.id", ondelete="SET NULL"), nullable=True)
+    #: Set only when real money has been recorded. Until then recovered_amount
+    #: stays NULL rather than borrowing the estimate.
+    resolved_revenue_record_id = Column(Integer, ForeignKey("revenue_records.id", ondelete="SET NULL"), nullable=True)
 
     detected_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
     contacted_at = Column(DateTime(timezone=True), nullable=True)
@@ -887,3 +913,36 @@ class RevenueOpportunity(Base):
 
     patient = relationship("PatientLead", foreign_keys=[patient_id])
     service = relationship("Service", foreign_keys=[service_id])
+
+
+class RevenueAction(Base):
+    """One outreach on one opportunity: what was sent, by whom, and what came back.
+
+    ``RevenueOpportunity.contacted_at`` was a single timestamp, which cannot
+    answer the question the funnel actually asks — of the people we reached, how
+    many replied. A patient contacted three times over a month is three actions
+    and one opportunity, and only the actions can say which message worked.
+
+    Nothing here sends anything. A row is written when a human has sent the
+    draft, so ``created_at`` is a record of an act, not a dispatch queue.
+    """
+    __tablename__ = "revenue_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    opportunity_id = Column(Integer, ForeignKey("revenue_opportunities.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    channel = Column(String, nullable=False)          # zalo | sms | call
+    #: The ZNS/SMS template this went out on, where the clinic uses one. Needed
+    #: to tell which wording recovers people, and to trace a complaint back.
+    template_code = Column(String, nullable=True)
+    message = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="sent", index=True)  # sent | responded | failed
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
+    #: When the patient answered. Detected from their own messages where the
+    #: conversation is on a connected channel; set by staff for a phone call.
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+
+    opportunity = relationship("RevenueOpportunity", backref="actions")

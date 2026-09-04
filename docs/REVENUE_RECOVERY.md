@@ -74,6 +74,71 @@ Vì vậy:
 | `gross_recovered` | Tổng tiền quay lại sau khi liên hệ. **Bao gồm cả khách vốn dĩ sẽ quay lại.** Không phải khẳng định nhân quả. |
 | `net_attributable` | Phần chênh so với nhóm đối chứng. Con số duy nhất được phép nói là "nhờ CareDesk". |
 
+---
+
+# Attribution v1
+
+Chuỗi: `Opportunity → Action → Response → Appointment → RevenueRecord`.
+
+`GET /revenue/opportunities/{id}/chain` trả về đúng chuỗi đó. Chủ phòng khám
+không tin một con số thì phải lần ngược được tới buổi khám và phiếu thu — không
+có nó thì dashboard chỉ còn hai lựa chọn: tin hoặc bỏ qua.
+
+## 3.1. Một lần đặt lịch = một lần thu hồi
+
+Đây là lỗi đã từng ship và là lý do lớp này tồn tại.
+
+Một khách có thể mang **nhiều cơ hội mở cùng lúc**: vừa quá hạn tái khám, vừa có
+yêu cầu đặt lịch bị bỏ quên, vừa từng no-show. Bản đầu đóng cả ba khi khách đặt
+một lịch → **một buổi ₫2.000.000 hiện thành ₫6.000.000 thu hồi**.
+
+Giờ: đúng **một** cơ hội được ghi công (`_match_strength` — ưu tiên trùng dịch
+vụ, rồi đã liên hệ, rồi liên hệ gần nhất; hoàn toàn tất định). Các cơ hội còn
+lại chuyển `superseded`: vẫn là miss thật nên không xóa, nhưng **bị loại khỏi cả
+doanh thu lẫn tỷ lệ chuyển đổi** — chúng không phải bằng chứng cho bên nào.
+
+## 3.2. Đặt lịch chưa phải là tiền
+
+`booked` và `recovered` là hai trạng thái khác nhau:
+
+| Trạng thái | Nghĩa | `recovered_amount` |
+|---|---|---|
+| `booked` | Đã có lịch hẹn | `NULL` |
+| `recovered` | Đã khám xong **và** có `RevenueRecord` | Số tiền **thật** trong phiếu thu |
+| `lost` (`no_show`) | Đặt rồi không đến | — |
+
+Tháng khách đặt lịch thường không phải tháng khách đến. Lấy `estimated_value`
+điền vào cột đã thu là cách dashboard bắt đầu lệch với sổ ngân hàng.
+
+Buổi khám trừ vào gói đã mua → `recovered` với số tiền **0**: buổi khám có thật,
+nhưng tiền đã thu từ trước, không được tính hai lần.
+
+## 3.3. Bốn mức quy kết
+
+| Loại | Khi nào | Được tính cho CareDesk? |
+|---|---|---|
+| `direct` | Đặt lịch trong `DIRECT_WINDOW_DAYS = 3` ngày sau lần liên hệ đầu | ✅ |
+| `assisted` | Đặt muộn hơn, trong `ATTRIBUTION_WINDOW_DAYS = 30` ngày | ✅ (yếu hơn, để riêng) |
+| `organic` | **Chưa hề liên hệ**, khách tự quay lại | ❌ — đây là baseline |
+| `unknown` | Ngoài cửa sổ quy kết, hoặc dữ liệu có từ trước lớp này | ❌ |
+
+Không có trần thời gian thì mọi khách từng quay lại cuối cùng đều ghi công cho
+một cơ hội cũ nào đó, và doanh thu thu hồi **tự lớn lên**.
+
+Lần nhắc sau **không** reset đồng hồ quy kết. Nếu không, một lead liên hệ tháng
+1 nhắc lại tháng 3 sẽ trông như vừa thắng trong tháng 3.
+
+## 3.4. Funnel đếm từ dữ liệu riêng của từng bước
+
+`Contacted → Responded → Booked → Completed → Revenue`, mỗi bước có nguồn riêng:
+`RevenueAction` cho lần liên hệ, **tin nhắn của chính khách** cho phản hồi,
+`Appointment` cho đặt lịch, `RevenueRecord` cho tiền. Không bước nào suy ra từ
+bước trước, nên khoảng rơi giữa hai bước là thật và đáng đọc.
+
+Funnel chỉ đếm người **đã thực sự được liên hệ**. Khách tự quay lại không nằm
+trong funnel outreach — cho vào sẽ khiến tỷ lệ liên hệ→đặt lịch trông như tin
+nhắn có tác dụng trong khi chưa gửi gì.
+
 ## 4. Chu kỳ tái khám phải do phòng khám khai
 
 `services.revisit_interval_days` mặc định **NULL = làm một lần, không bao giờ
@@ -106,8 +171,8 @@ của phòng khám, không phải thứ sản phẩm được quyền đem cho.
 Nằm ngoài phạm vi lần này, ghi lại để không ai tưởng đã có:
 
 * Campaign tự sinh từ cơ hội, và AI Sales Agent có chính sách Auto / Cần duyệt /
-  Chỉ người.
-* Chuỗi attribution ở mức từng cơ hội (hiện `RevenueRecord.source` vẫn ở mức lượt).
+  Chỉ người. Cố ý đứng sau attribution: làm Agent trước thì sẽ có nhiều booking
+  mà không biết Agent có thực sự tạo thêm doanh thu hay không.
 * Xếp hạng Hot / Warm / Cold, và CPL / CAC / ROAS theo chi phí quảng cáo.
 * Học xác suất theo từng đặc trưng khách. Hiện chỉ là tỷ lệ theo nhóm — đủ dùng
   cho MVP và giải thích được, đó là điểm mạnh chứ không phải hạn chế tạm thời.

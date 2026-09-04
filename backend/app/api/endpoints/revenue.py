@@ -20,7 +20,7 @@ from backend.app.api.deps import verify_owner, verify_receptionist_or_above
 from backend.app.core import clock
 from backend.app.core.database import get_db
 from backend.app.models.models import (
-    PatientLead, RevenueOpportunity, Service, User,
+    PatientLead, RevenueAction, RevenueOpportunity, Service, User,
 )
 from backend.app.services import revenue_recovery as rr
 from backend.app.services.audit import log_action
@@ -130,6 +130,12 @@ def run_detection(
 
 class ContactPayload(BaseModel):
     channel: Optional[str] = Field(None, description="zalo | sms | call")
+    #: The ZNS/SMS template it went out on, so a complaint can be traced back
+    #: and so the clinic can see which wording actually recovers people.
+    template_code: Optional[str] = None
+    #: What was really sent, if staff edited the draft. Stored as sent, not as
+    #: drafted — otherwise the log records our suggestion instead of their work.
+    message: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -153,13 +159,34 @@ def mark_contacted(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cơ hội này thuộc nhóm đối chứng — liên hệ sẽ làm hỏng phép đo doanh thu thu hồi.",
         )
-    opportunity.status = "contacted"
-    opportunity.contacted_at = clock.now()
-    if payload.channel:
-        opportunity.recommended_channel = payload.channel
+    channel = payload.channel or opportunity.recommended_channel or "call"
+    rr.record_action(db, opportunity, channel=channel, message=payload.message,
+                     template_code=payload.template_code, user_id=current_user.id)
+    opportunity.recommended_channel = channel
     db.commit()
     log_action(db, current_user.id, "revenue_opportunity_contacted", details=str(opportunity_id))
     return _serialize(db, opportunity)
+
+
+@router.post("/actions/{action_id}/responded")
+def mark_responded(
+    action_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """The patient answered.
+
+    Replies on a connected channel are picked up automatically from the
+    patient's own messages; this is for a phone call, which leaves no trace the
+    system can read.
+    """
+    action = db.get(RevenueAction, action_id)
+    if not action or action.clinic_id != _clinic_id(current_user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lượt liên hệ.")
+    action.status = "responded"
+    action.responded_at = clock.now()
+    db.commit()
+    return {"id": action.id, "status": action.status, "responded_at": action.responded_at}
 
 
 class OutcomePayload(BaseModel):
@@ -204,6 +231,49 @@ def record_outcome(
     db.commit()
     log_action(db, current_user.id, f"revenue_opportunity_{payload.outcome}", details=str(opportunity_id))
     return _serialize(db, opportunity)
+
+
+@router.get("/funnel")
+def funnel(
+    days: int = Query(30, ge=7, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """Contacted -> responded -> booked -> completed, and the money at the end.
+
+    Each step is counted from its own record rather than inferred from the step
+    before, so the drop between any two of them is real and worth reading.
+    """
+    return rr.recovery_funnel(db, _clinic_id(current_user), days=days)
+
+
+@router.get("/attribution")
+def attribution(
+    days: int = Query(30, ge=7, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """Recovered money split by how defensible the credit is.
+
+    Only ``attributable_revenue`` (direct + assisted) may be described as
+    revenue CareDesk recovered. Organic is the clinic's own baseline and is
+    reported so the total reconciles, never so it can be added in.
+    """
+    return rr.attribution_summary(db, _clinic_id(current_user), days=days)
+
+
+@router.get("/opportunities/{opportunity_id}/chain")
+def chain(
+    opportunity_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """Follow one figure all the way to the visit and the receipt.
+
+    An owner who does not believe a number has to be able to argue with it;
+    without this the dashboard is something they take on faith or ignore.
+    """
+    return rr.attribution_chain(db, _owned(db, opportunity_id, current_user))
 
 
 @router.get("/loss-reasons")
