@@ -120,9 +120,16 @@ export default function MoneyPage() {
         <h1>Doanh thu đang rơi</h1>
         <p>Những khoản phòng khám đã bỏ lỡ, xếp theo số tiền kỳ vọng thu lại được.</p>
       </div>
-      <button className="btn btn-secondary" onClick={rescan} disabled={busy}>
-        {busy ? 'Đang quét...' : 'Quét lại ngay'}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {performance?.pilot_status === 'active' && (
+          <span className="badge pending">
+            {performance.pricing_label} · đang chạy pilot
+          </span>
+        )}
+        <button className="btn btn-secondary" onClick={rescan} disabled={busy}>
+          {busy ? 'Đang quét...' : 'Quét lại ngay'}
+        </button>
+      </div>
     </div>
 
     {error && <div style={{ color: 'var(--danger-color)', marginBottom: 12 }}>{error}</div>}
@@ -186,11 +193,19 @@ export default function MoneyPage() {
           </div>
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)' }}>ROI</div>
+            {/* Never a bare dash. A free pilot is a fact about the clinic, not
+                missing data, and the two must not look the same. */}
             <div style={{ fontSize: 20, fontWeight: 700 }}>
-              {performance.roi ? `${performance.roi.toFixed(1)}x` : '—'}
+              {performance.roi_status === 'ok'
+                ? `${performance.roi.toFixed(1)}x`
+                : performance.roi_status === 'pilot_free'
+                  ? <span style={{ fontSize: 15 }}>Pilot miễn phí</span>
+                  : '—'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>
-              {performance.roi ? `Trên phí thuê bao ${money(performance.subscription_cost)}.` : 'Chưa đủ dữ liệu để kết luận.'}
+              {performance.roi_status === 'ok'
+                ? `Trên phí thuê bao ${money(performance.subscription_cost)}.`
+                : performance.roi_note}
             </div>
           </div>
         </div>

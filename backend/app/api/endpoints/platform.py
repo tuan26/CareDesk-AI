@@ -6,6 +6,7 @@ Guarded by is_platform_admin — normal clinic owners can never reach it.
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
@@ -318,3 +319,74 @@ def create_organization(
     db.commit()
     db.refresh(org)
     return org
+
+
+class PilotTermsPayload(BaseModel):
+    """Commercial terms. Vendor-side on purpose: a clinic owner declaring
+    themselves on a free pilot would be marking their own invoice."""
+    pricing_mode: str = Field(..., description="unconfigured | pilot_free | sponsored | paid")
+    monthly_fee: Optional[float] = Field(None, ge=0)
+    pilot_status: Optional[str] = Field(None, description="none | active | completed")
+
+
+@router.put("/clinics/{clinic_id}/pilot-terms")
+def set_pilot_terms(
+    clinic_id: int,
+    payload: PilotTermsPayload,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_platform_admin),
+) -> Any:
+    """Say what a clinic is actually paying, rather than leaving it to be guessed.
+
+    ROI divides recovered revenue by the subscription fee, and a fee of zero
+    means three different things — not priced yet, free pilot, sponsored. Storing
+    which one it is keeps the ROI figure either honest or absent, never invented.
+
+    Moving a clinic to "paid" without a fee is refused: that combination is the
+    one that would silently divide by zero-as-a-price.
+    """
+    from backend.app.services import revenue_recovery as rr
+
+    clinic = db.get(Clinic, clinic_id)
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phòng khám.")
+    if payload.pricing_mode not in rr.PRICING_MODES:
+        raise HTTPException(status_code=400,
+                            detail=f"pricing_mode phải thuộc: {', '.join(rr.PRICING_MODES)}")
+    if payload.pilot_status and payload.pilot_status not in rr.PILOT_STATUSES:
+        raise HTTPException(status_code=400,
+                            detail=f"pilot_status phải thuộc: {', '.join(rr.PILOT_STATUSES)}")
+
+    fee = payload.monthly_fee if payload.monthly_fee is not None else float(clinic.monthly_fee or 0)
+    if payload.pricing_mode == rr.PAID and fee <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Đánh dấu 'paid' thì phải có monthly_fee > 0 — nếu không ROI sẽ chia cho 0.",
+        )
+
+    clinic.pricing_mode = payload.pricing_mode
+    if payload.monthly_fee is not None:
+        clinic.monthly_fee = payload.monthly_fee
+    if payload.pilot_status:
+        previous = clinic.pilot_status
+        clinic.pilot_status = payload.pilot_status
+        # Stamped once each. A pilot restarted after being closed keeps its
+        # original start, because the evidence window it produced is what the
+        # numbers were measured over.
+        if payload.pilot_status == "active" and not clinic.pilot_started_at:
+            clinic.pilot_started_at = clock.now()
+        if payload.pilot_status == "completed" and previous != "completed":
+            clinic.pilot_ended_at = clock.now()
+
+    db.commit()
+    log_action(db, admin.id, "pilot_terms_set",
+               details=f"clinic={clinic_id} mode={clinic.pricing_mode} fee={clinic.monthly_fee}")
+    return {
+        "clinic_id": clinic.id,
+        "pricing_mode": clinic.pricing_mode,
+        "pricing_label": rr.PRICING_MODES[clinic.pricing_mode],
+        "monthly_fee": clinic.monthly_fee,
+        "pilot_status": clinic.pilot_status,
+        "pilot_started_at": clinic.pilot_started_at,
+        "pilot_ended_at": clinic.pilot_ended_at,
+    }

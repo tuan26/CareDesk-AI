@@ -103,6 +103,18 @@ class Clinic(Base):
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)  # set while on a free trial
     ai_quota_monthly = Column(Integer, default=200)  # max bot replies per month
     monthly_fee = Column(Float, default=0.0)  # subscription fee, used for ROI math
+    #: What the fee above *means*. Zero is ambiguous — it can be "not set up
+    #: yet", "free pilot", or "sponsored" — and ROI is the one figure that must
+    #: never be computed from a number nobody has confirmed. So the meaning is
+    #: stored rather than inferred: unconfigured | pilot_free | sponsored | paid.
+    #: Existing clinics were backfilled to "paid" only where a fee was already
+    #: set; everything else became "unconfigured", because it was.
+    pricing_mode = Column(String, nullable=False, default="unconfigured")
+    #: none | active | completed. Kept apart from pricing because a clinic can
+    #: be in a paid pilot, or free and not piloting anything.
+    pilot_status = Column(String, nullable=False, default="none")
+    pilot_started_at = Column(DateTime(timezone=True), nullable=True)
+    pilot_ended_at = Column(DateTime(timezone=True), nullable=True)
     deposit_amount = Column(Float, default=0.0)  # 0 = deposits disabled
     google_review_url = Column(String, nullable=True)  # link sent to happy patients
     digest_enabled = Column(Boolean, default=True)  # daily owner digest

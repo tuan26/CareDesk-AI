@@ -101,6 +101,34 @@ BASE_RATES = {
 #: noise — 3 out of 4 is not a 75% conversion rate.
 MIN_RESOLVED_FOR_OWN_RATE = 20
 
+# --- what the subscription fee means ----------------------------------------
+
+UNCONFIGURED = "unconfigured"
+PILOT_FREE = "pilot_free"
+SPONSORED = "sponsored"
+PAID = "paid"
+
+PRICING_MODES = {
+    UNCONFIGURED: "Chưa cấu hình phí",
+    PILOT_FREE: "Pilot miễn phí",
+    SPONSORED: "Được tài trợ",
+    PAID: "Có trả phí",
+}
+
+PILOT_STATUSES = {
+    "none": "Không chạy pilot",
+    "active": "Đang chạy pilot",
+    "completed": "Pilot đã kết thúc",
+}
+
+#: Why an ROI figure is absent. A bare null reads as a bug; each of these reads
+#: as a fact about the clinic, and only the last one is about missing data.
+ROI_OK = "ok"
+ROI_PILOT_FREE = "pilot_free"
+ROI_SPONSORED = "sponsored"
+ROI_NO_PRICE = "unconfigured_pricing"
+ROI_NO_HOLDOUT = "insufficient_holdout"
+
 # --- attribution ------------------------------------------------------------
 
 DIRECT = "direct"
@@ -1005,6 +1033,8 @@ def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[st
 
     clinic = db.get(Clinic, clinic_id)
     fee = float(clinic.monthly_fee or 0) * (days / 30.0) if clinic else 0.0
+    roi_status, roi_note = _roi_status(clinic, fee, measurable, holdout_n)
+    roi = (net / fee) if (roi_status == ROI_OK and net is not None and fee > 0) else None
 
     return {
         "window_days": days,
@@ -1025,8 +1055,44 @@ def recovery_performance(db: Session, clinic_id: int, days: int = 90) -> Dict[st
             f"kết luận; hiện có {holdout_n}. Trước đó chỉ báo cáo doanh thu gộp."
         ),
         "subscription_cost": fee,
-        "roi": (net / fee) if (measurable and net is not None and fee > 0) else None,
+        "pricing_mode": clinic.pricing_mode if clinic else UNCONFIGURED,
+        "pricing_label": PRICING_MODES.get(
+            clinic.pricing_mode if clinic else UNCONFIGURED, UNCONFIGURED),
+        "pilot_status": clinic.pilot_status if clinic else "none",
+        "monthly_fee": float(clinic.monthly_fee or 0) if clinic else 0.0,
+        "roi": roi,
+        # Say which of the reasons it is. "ROI: —" with no explanation reads as
+        # something broken, and a free pilot is not something broken.
+        "roi_status": roi_status,
+        "roi_note": roi_note,
     }
+
+
+def _roi_status(clinic, fee: float, measurable: bool, holdout_n: int) -> tuple[str, Optional[str]]:
+    """Why there is, or is not, an ROI figure.
+
+    Commercial terms are read from ``pricing_mode`` and never inferred from the
+    fee being zero. A zero can mean the clinic has not been priced yet, that
+    they are on a free pilot, or that someone else is paying — three different
+    statements, and dividing by any of them would invent a return.
+    """
+    mode = (clinic.pricing_mode if clinic else UNCONFIGURED) or UNCONFIGURED
+
+    if mode == PILOT_FREE:
+        return ROI_PILOT_FREE, "Pilot miễn phí — chưa tính ROI."
+    if mode == SPONSORED:
+        return ROI_SPONSORED, "Chi phí do bên khác tài trợ — ROI không áp dụng."
+    if mode == UNCONFIGURED or fee <= 0:
+        return ROI_NO_PRICE, (
+            "Chưa cấu hình phí thuê bao, nên không có mẫu số để tính ROI. "
+            "Đặt pricing_mode và monthly_fee khi phòng khám chuyển sang trả phí."
+        )
+    if not measurable:
+        return ROI_NO_HOLDOUT, (
+            f"Cần ít nhất {MIN_HOLDOUT_FOR_MEASUREMENT} cơ hội đối chứng để tách phần "
+            f"doanh thu thực sự do CareDesk tạo ra; hiện có {holdout_n}."
+        )
+    return ROI_OK, None
 
 
 def recovery_funnel(db: Session, clinic_id: int, days: int = 30) -> Dict[str, Any]:

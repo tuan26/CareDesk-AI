@@ -200,6 +200,38 @@ trả lời "một ca thắng đáng bao nhiêu", câu chẳng ai cần.
 Sau vài phòng khám, đây là cơ sở thực tế để nói *"một opportunity của CareDesk
 đáng khoảng X đồng"* — và từ đó mới bàn được giá.
 
+## P4b. `₫0` không tự nó có nghĩa gì
+
+`monthly_fee = 0` có ba nghĩa hoàn toàn khác nhau: **chưa cấu hình giá**, **pilot
+miễn phí**, **được tài trợ**. Để logic nghiệp vụ đoán ý nghĩa của số 0 là cách
+tạo ra một con số ROI không ai kiểm chứng được.
+
+Nên nghĩa được **lưu**, không suy ra:
+
+| `pricing_mode` | `roi_status` | Màn hình hiện |
+|---|---|---|
+| `pilot_free` | `pilot_free` | "Pilot miễn phí — chưa tính ROI" |
+| `sponsored` | `sponsored` | "Chi phí do bên khác tài trợ" |
+| `unconfigured` | `unconfigured_pricing` | "Chưa cấu hình phí thuê bao" |
+| `paid`, đủ đối chứng | `ok` | `8.4x` |
+| `paid`, thiếu đối chứng | `insufficient_holdout` | "Cần ≥30 ca đối chứng" |
+
+`roi: null` kèm `roi_status` — vì một ô trống không lời giải thích đọc như lỗi,
+còn pilot miễn phí không phải lỗi.
+
+**Miễn phí không làm giá trị mất đo được.** `net_attributable` vẫn báo cáo bình
+thường trong pilot miễn phí; chỉ có *tỷ suất trên một mức giá không ai trả* là
+không tồn tại.
+
+Đặt qua `PUT /platform/clinics/{id}/pilot-terms` — phía nhà cung cấp, không phải
+phía phòng khám: để chủ phòng khám tự khai mình đang dùng miễn phí là để họ tự
+ký hoá đơn của mình. Chuyển sang `paid` mà `monthly_fee = 0` bị **từ chối**: đó
+đúng là tổ hợp sẽ lặng lẽ chia cho số 0 rồi gọi kết quả là lợi nhuận.
+
+Backfill khi nâng cấp cố ý dè dặt: chỉ phòng khám **đã có phí > 0** thành
+`paid`, còn lại thành `unconfigured` — đoán rằng một số 0 nghĩa là pilot miễn
+phí chính là kiểu suy diễn mà cột này sinh ra để loại bỏ.
+
 ## P5. Ba tầng dữ liệu, ba ngưỡng khác nhau
 
 | Tầng | Cần | Mở khoá |

@@ -284,3 +284,106 @@ def test_going_live_and_revenue_readiness_are_reported_separately():
 
     source = inspect.getsource(onboarding.onboarding_status)
     assert "revenue_recovery_ready" in source
+
+
+# --- what a zero fee actually means ------------------------------------------
+
+def _measurable_holdout(db, clinic):
+    """Enough control cases that ROI is only ever blocked by pricing."""
+    for i in range(rr.MIN_HOLDOUT_FOR_MEASUREMENT + 5):
+        _opportunity(db, clinic, status="lost", loss_reason="timing", is_holdout=True)
+    for i in range(10):
+        _opportunity(db, clinic, status="recovered", recovered_amount=1_000_000,
+                     contacted_at=clock.now())
+    db.commit()
+
+
+@pytest.mark.parametrize("mode, fee, expected", [
+    ("pilot_free", 0, rr.ROI_PILOT_FREE),
+    ("sponsored", 0, rr.ROI_SPONSORED),
+    ("unconfigured", 0, rr.ROI_NO_PRICE),
+    ("paid", 3_000_000, rr.ROI_OK),
+])
+def test_roi_says_why_it_is_missing_rather_than_just_being_null(db, clinic, mode, fee, expected):
+    """A bare null reads as a bug. "Pilot miễn phí" reads as a fact, and only
+    one of these four is actually about missing data."""
+    _measurable_holdout(db, clinic)
+    clinic.pricing_mode = mode
+    clinic.monthly_fee = fee
+    db.commit()
+
+    performance = rr.recovery_performance(db, clinic.id)
+
+    assert performance["roi_status"] == expected
+
+
+def test_a_free_pilot_is_not_read_off_a_zero_fee(db, clinic):
+    """The whole point. Zero means "not priced yet", "free pilot" or
+    "sponsored" — three different statements — so a clinic nobody has priced
+    must not be reported as being on a free pilot."""
+    _measurable_holdout(db, clinic)
+    clinic.monthly_fee = 0
+    clinic.pricing_mode = "unconfigured"
+    db.commit()
+
+    performance = rr.recovery_performance(db, clinic.id)
+
+    assert performance["roi_status"] == rr.ROI_NO_PRICE
+    assert performance["roi_status"] != rr.ROI_PILOT_FREE
+    assert "Chưa cấu hình phí" in performance["roi_note"]
+
+
+def test_a_free_pilot_still_reports_the_revenue_it_created(db, clinic):
+    """Not charging for something does not make its value unmeasurable. Only
+    the return on a price nobody paid is undefined."""
+    _measurable_holdout(db, clinic)
+    clinic.pricing_mode = "pilot_free"
+    clinic.monthly_fee = 0
+    db.commit()
+
+    performance = rr.recovery_performance(db, clinic.id)
+
+    assert performance["roi"] is None
+    assert performance["roi_note"] == "Pilot miễn phí — chưa tính ROI."
+    assert performance["measurable"] is True, "vẫn đo được phần doanh thu tăng thêm"
+    assert performance["net_attributable"] is not None
+
+
+def test_moving_to_paid_without_a_fee_is_refused(db, clinic):
+    """The one combination that would divide recovered revenue by zero-as-a-
+    price and call the result a return."""
+    from fastapi import HTTPException
+
+    from backend.app.api.endpoints.platform import PilotTermsPayload, set_pilot_terms
+
+    clinic.pricing_mode = "pilot_free"
+    clinic.monthly_fee = 0
+    db.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        set_pilot_terms(clinic.id, PilotTermsPayload(pricing_mode="paid"),
+                        db=db, admin=type("U", (), {"id": 1})())
+
+    assert raised.value.status_code == 400
+    assert "monthly_fee" in raised.value.detail
+
+
+def test_starting_and_finishing_a_pilot_is_stamped_once(db, clinic):
+    """The evidence window the numbers were measured over. A pilot reopened
+    later keeps its original start rather than quietly moving the goalposts."""
+    from backend.app.api.endpoints.platform import PilotTermsPayload, set_pilot_terms
+
+    admin = type("U", (), {"id": 1})()
+    set_pilot_terms(clinic.id, PilotTermsPayload(pricing_mode="pilot_free", monthly_fee=0,
+                                                 pilot_status="active"), db=db, admin=admin)
+    started = clinic.pilot_started_at
+    assert started is not None
+
+    set_pilot_terms(clinic.id, PilotTermsPayload(pricing_mode="pilot_free", monthly_fee=0,
+                                                 pilot_status="active"), db=db, admin=admin)
+    assert clinic.pilot_started_at == started
+
+    set_pilot_terms(clinic.id, PilotTermsPayload(pricing_mode="paid", monthly_fee=3_000_000,
+                                                 pilot_status="completed"), db=db, admin=admin)
+    assert clinic.pilot_ended_at is not None
+    assert clinic.pilot_started_at == started
