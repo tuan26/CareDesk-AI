@@ -37,6 +37,14 @@ class BaselineIn(BaseModel):
     return_percent: Optional[float] = Field(None, ge=0, le=100)
 
 
+#: Steps that do not gate the public link. A clinic can take bookings and answer
+#: patients without either: "baseline" is a question about their past, "revisit"
+#: configures Revenue Recovery. Defined once because it was briefly defined
+#: twice, and the copy in complete_onboarding kept a clinic offline over a
+#: revenue setting that has nothing to do with whether their page works.
+NON_BLOCKING_STEPS = ("baseline", "revisit")
+
+
 def _clinic(db: Session, user: User) -> Clinic:
     clinic = db.query(Clinic).filter(Clinic.id == user.clinic_id).first()
     if not clinic:
@@ -61,6 +69,10 @@ def _steps(db: Session, clinic: Clinic) -> list[dict]:
     has_schedule = db.query(WorkingSchedule).join(
         Doctor, WorkingSchedule.doctor_id == Doctor.id
     ).filter(Doctor.clinic_id == cid).first() is not None
+    has_revisit_interval = db.query(Service).filter(
+        Service.clinic_id == cid,
+        Service.revisit_interval_days != None,   # noqa: E711
+    ).first() is not None
 
     return [
         {"key": "clinic", "title": "Thông tin phòng khám", "path": "/clinic",
@@ -75,6 +87,14 @@ def _steps(db: Session, clinic: Clinic) -> list[dict]:
         {"key": "doctors", "title": "Bác sĩ và lịch làm việc", "path": "/doctors",
          "done": has_doctor and has_schedule,
          "hint": "Không có lịch làm việc thì AI không chốt được lịch hẹn nào."},
+        {"key": "revisit", "title": "Chu kỳ tái khám", "path": "/money",
+         # Either some service repeats, or the clinic has said none of them do.
+         # Both are finished states; only silence is unfinished, because silence
+         # and "nothing repeats here" are indistinguishable in the data.
+         "done": has_revisit_interval or clinic.revisit_intervals_reviewed_at is not None,
+         "hint": "Dịch vụ nào khách cần quay lại, và sau bao nhiêu ngày. "
+                 "Không khai thì CareDesk không tìm được khách quá hạn tái khám — "
+                 "và hệ thống sẽ không tự đoán hộ."},
         {"key": "baseline", "title": "Số liệu hiện tại", "path": "/onboarding",
          "done": clinic.baseline_captured_at is not None,
          "hint": "Để 2–3 tháng nữa đo được CareDesk mang lại thay đổi gì — "
@@ -91,12 +111,14 @@ def onboarding_status(
     steps = _steps(db, clinic)
     # Step 5 is a question, not a configuration: a clinic that skips it can still
     # operate, so it does not gate going live.
-    blocking = [s for s in steps if s["key"] != "baseline"]
+    blocking = [s for s in steps if s["key"] not in NON_BLOCKING_STEPS]
     return {
         "steps": steps,
         "completed_at": clinic.onboarding_completed_at,
         "can_go_live": all(s["done"] for s in blocking),
         "next": next((s["key"] for s in steps if not s["done"]), None),
+        "revenue_recovery_ready": next(
+            (s["done"] for s in steps if s["key"] == "revisit"), False),
     }
 
 
@@ -132,7 +154,8 @@ def complete_onboarding(
     the clinic will blame on the AI.
     """
     clinic = _clinic(db, current_user)
-    missing = [s for s in _steps(db, clinic) if not s["done"] and s["key"] != "baseline"]
+    missing = [s for s in _steps(db, clinic)
+               if not s["done"] and s["key"] not in NON_BLOCKING_STEPS]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
