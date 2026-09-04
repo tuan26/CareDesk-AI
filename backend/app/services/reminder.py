@@ -254,6 +254,24 @@ async def send_daily_digest():
         db.close()
 
 
+def _detect_revenue_opportunities(db):
+    """Sweep every active clinic for leaked revenue.
+
+    Per-clinic try/except on purpose: one tenant with odd data must not stop
+    detection for all the others, and the loop that calls this also drives
+    reminders — an exception escaping here would stop those too.
+    """
+    from backend.app.models.models import Clinic
+    from backend.app.services import revenue_recovery
+
+    for (clinic_id,) in db.query(Clinic.id).filter(Clinic.is_active == True).all():  # noqa: E712
+        try:
+            revenue_recovery.run_detection(db, clinic_id)
+        except Exception:
+            db.rollback()
+            logger.exception("Revenue detection thất bại cho clinic %s", clinic_id)
+
+
 async def reminder_loop():
     """Unified background scheduler: reminders + automation engine + daily digest."""
     from backend.app.services.events import run_engine_tick, run_recurring_rules
@@ -277,6 +295,11 @@ async def reminder_loop():
             # Recurring rules (win-back, package expiry): once per hour is plenty
             if last_recurring_run is None or (now - last_recurring_run).total_seconds() > 3600:
                 run_recurring_rules(db)
+                # Revenue leakage detection rides the same hourly slot. It only
+                # writes opportunity rows — nothing is sent to a patient from
+                # here — so a clinic that never opens the screen still arrives
+                # to a queue rather than an empty page inviting them to "scan".
+                _detect_revenue_opportunities(db)
                 last_recurring_run = now
         except Exception:
             logger.exception("Automation engine tick failed")

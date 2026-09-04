@@ -182,6 +182,11 @@ class Service(Base):
     preparation_instructions = Column(Text, nullable=True)
     faq_data = Column(JSON, nullable=True)  # Legacy list of Q&A dictionaries for RAG fallback
     localized_content = Column(JSON, nullable=True)  # {locale: {name, description, preparation_instructions, faq}}
+    #: How long after a visit this service is normally repeated, in days.
+    #: NULL means "one-off, never chase a revisit" — the safe default, because a
+    #: wrong number here turns into the clinic pestering someone who was never
+    #: due back. Set per service by the clinic; nothing infers it.
+    revisit_interval_days = Column(Integer, nullable=True)
 
     clinic = relationship("Clinic", back_populates="services")
     appointments = relationship("Appointment", back_populates="service")
@@ -798,3 +803,87 @@ class FeatureFlag(Base):
     enabled = Column(Boolean, nullable=False, default=False)
     updated_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now(),
                         onupdate=func.now())
+
+
+class RevenueOpportunity(Base):
+    """Money the clinic has probably already lost, written down as a row.
+
+    Everything else in this schema records what *did* happen: an appointment
+    that exists, revenue that was taken. This records what should have happened
+    and did not — a patient overdue for a revisit, a course of treatment
+    abandoned halfway, a package about to expire with sessions unused, a booking
+    request nobody rang back.
+
+    Two fields carry the weight and both are deliberately conservative:
+
+    ``estimated_value`` is only ever derived from a number the clinic itself
+    entered — a service price, what they actually paid for a package. Nothing is
+    invented, because the whole product rests on the owner believing this figure.
+
+    ``probability`` starts from a documented base rate per type and switches to
+    this clinic's *own* observed conversion once enough opportunities of that
+    type have resolved. ``reasons`` records what moved it, so the screen can
+    explain itself rather than showing an oracle's number.
+
+    ``is_holdout`` is what makes "recovered revenue" an honest claim instead of
+    a flattering one. A slice of opportunities is deliberately never contacted;
+    the difference in conversion between contacted and held-out is the only part
+    of the money that CareDesk can take credit for. Without it we would be
+    counting patients who were coming back anyway.
+    """
+    __tablename__ = "revenue_opportunities"
+    __table_args__ = (
+        # One open opportunity per (patient, type, subject). Re-running detection
+        # must not stack duplicates on the same patient every night.
+        UniqueConstraint("clinic_id", "opportunity_type", "patient_id", "dedupe_key",
+                         name="uq_revenue_opportunity_subject"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patient_leads.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+
+    #: See services/revenue_recovery.py for the six detectors.
+    opportunity_type = Column(String, nullable=False, index=True)
+    #: Distinguishes two opportunities of the same type for the same patient —
+    #: the package id, the service id, the booking request id. Never NULL
+    #: (SQLite and Postgres both let NULLs slip past a unique constraint).
+    dedupe_key = Column(String, nullable=False, default="")
+
+    # What it is about. All optional: a lost lead has no package, an expiring
+    # package has no booking request.
+    service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True)
+    patient_package_id = Column(Integer, ForeignKey("patient_packages.id", ondelete="SET NULL"), nullable=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    booking_request_id = Column(Integer, ForeignKey("booking_requests.id", ondelete="SET NULL"), nullable=True)
+
+    estimated_value = Column(Float, nullable=False, default=0.0)
+    probability = Column(Float, nullable=False, default=0.0)   # 0..1
+    #: Days overdue / days until the money is gone. Drives urgency in the queue.
+    urgency_days = Column(Integer, nullable=False, default=0)
+    #: Human-readable evidence: [{"code": ..., "text": ..., "weight": ...}]
+    reasons = Column(JSON, nullable=True)
+
+    # What to do about it — the Next Best Action, resolved at detection time.
+    recommended_channel = Column(String, nullable=True)   # zalo | sms | call
+    recommended_message = Column(Text, nullable=True)
+    recommended_offer = Column(String, nullable=True)
+
+    status = Column(String, nullable=False, default="open", index=True)
+    # open | contacted | recovered | lost | dismissed | expired
+    is_holdout = Column(Boolean, nullable=False, default=False, index=True)
+
+    detected_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
+    contacted_at = Column(DateTime(timezone=True), nullable=True)
+    #: Set when the patient acted. The appointment/revenue that closed the loop.
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    recovered_amount = Column(Float, nullable=True)
+    #: Why it was lost, filled in by staff. Free text is useless in aggregate,
+    #: so this is a closed list — see LOSS_REASONS.
+    loss_reason = Column(String, nullable=True)
+
+    patient = relationship("PatientLead", foreign_keys=[patient_id])
+    service = relationship("Service", foreign_keys=[service_id])

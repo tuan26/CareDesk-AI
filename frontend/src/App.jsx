@@ -17,6 +17,7 @@ import PlatformPage from './pages/PlatformPage';
 import OrgPage from './pages/OrgPage';
 import ClinicChatPage from './pages/ClinicChatPage';
 import BookingRequestsPage from './pages/BookingRequestsPage';
+import MoneyPage from './pages/MoneyPage';
 import OnboardingPage from './pages/OnboardingPage';
 import QueuePage from './pages/QueuePage';
 import WebsitePage from './pages/WebsitePage';
@@ -79,6 +80,7 @@ function App() {
           <Route path="doctors" element={<DoctorsPage />} />
           <Route path="appointments" element={<AppointmentsPage />} />
           <Route path="booking-requests" element={<BookingRequestsPage />} />
+          <Route path="money" element={<MoneyPage />} />
           <Route path="queue" element={<QueuePage />} />
 
           <Route path="inbox" element={<InboxPage />} />

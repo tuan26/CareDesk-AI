@@ -79,6 +79,9 @@ export default function Layout() {
       { to: '/appointments', icon: '📅', text: t('appointments') },
       { to: '/queue', icon: '🚶', text: 'Hàng đợi khám' },
     ] },
+    { label: 'Doanh thu rơi', items: [
+      { to: '/money', icon: '💰', text: 'Tiền đang rơi' },
+    ] },
     { label: t('retain'), items: [
       { to: '/patients', icon: '👥', text: t('patients') }, { to: '/packages', icon: '🎁', text: t('packages') }, { to: '/automation', icon: '⚡', text: t('automation') },
     ] },
