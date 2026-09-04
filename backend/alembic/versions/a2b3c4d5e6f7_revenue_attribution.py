@@ -75,5 +75,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("revenue_actions")
+    # The index has to go first. SQLite refuses to drop a column an index still
+    # references, and it fails halfway through — leaving the table with some
+    # columns gone and the migration marked unapplied. Found by rehearsing the
+    # rollback rather than by needing it, which is the only good time to find it.
+    op.drop_index("ix_revenue_opportunities_attribution", table_name="revenue_opportunities")
     for name, _ in _NEW_COLUMNS:
         op.drop_column("revenue_opportunities", name)
