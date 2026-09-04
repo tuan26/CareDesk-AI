@@ -440,16 +440,29 @@ def test_the_patient_gives_a_different_phone_in_chat(db, clinic):
 
 
 def test_a_fully_booked_day_offers_the_waitlist(db, clinic):
-    """Every slot taken. The reply must offer something rather than just refuse."""
+    """Every slot taken. The reply must offer something rather than just refuse.
+
+    Filling only BS An's day used to be enough, and the test passed Monday to
+    Thursday and failed on Friday and Saturday — BS Bích works weekends, so on
+    those days the flow correctly offered her instead and the assertion read
+    that as a bug. The day is only full when every doctor rostered on it is
+    full, so the fixture now fills whoever is actually working.
+    """
     tomorrow = clock.today() + datetime.timedelta(days=1)
-    doctor = clinic["doctors"]["an"]
-    start = datetime.datetime.combine(tomorrow, datetime.time(8, 0))
-    while start.time() < datetime.time(18, 0):
-        db.add(Appointment(clinic_id=clinic["clinic"].id, branch_id=clinic["main"].id,
-                           doctor_id=doctor.id, patient_id=clinic["patient"].id,
-                           service_id=clinic["services"]["mun"].id, status="confirmed",
-                           start_time=start, end_time=start + datetime.timedelta(minutes=45)))
-        start += datetime.timedelta(minutes=45)
+    rostered = db.query(WorkingSchedule).filter(
+        WorkingSchedule.day_of_week == tomorrow.weekday()
+    ).all()
+    assert rostered, "không bác sĩ nào có ca ngày mai — kịch bản kín lịch vô nghĩa"
+
+    for shift in rostered:
+        start = datetime.datetime.combine(tomorrow, shift.start_time)
+        end = datetime.datetime.combine(tomorrow, shift.end_time)
+        while start < end:
+            db.add(Appointment(clinic_id=clinic["clinic"].id, branch_id=clinic["main"].id,
+                               doctor_id=shift.doctor_id, patient_id=clinic["patient"].id,
+                               service_id=clinic["services"]["mun"].id, status="confirmed",
+                               start_time=start, end_time=start + datetime.timedelta(minutes=45)))
+            start += datetime.timedelta(minutes=45)
     db.commit()
 
     conv = _conversation(db, clinic)
