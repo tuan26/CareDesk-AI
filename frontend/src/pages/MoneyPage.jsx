@@ -12,12 +12,14 @@ export default function MoneyPage() {
   const [funnel, setFunnel] = useState(null);
   const [attribution, setAttribution] = useState(null);
   const [chain, setChain] = useState(null);
+  const [pilot, setPilot] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [queue, setQueue] = useState([]);
   const [reasons, setReasons] = useState([]);
   const [services, setServices] = useState([]);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState(null);
-  const [outcome, setOutcome] = useState({ outcome: 'recovered', loss_reason: 'price' });
+  const [outcome, setOutcome] = useState({ outcome: 'recovered', loss_reason: 'price', verdict: '' });
   const [showSetup, setShowSetup] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -27,11 +29,13 @@ export default function MoneyPage() {
     setLoading(true);
     try {
       const suffix = filter ? `?type=${filter}` : '';
-      const [leak, perf, fun, attr, q, reasonList, serviceList] = await Promise.all([
+      const [leak, perf, fun, attr, pil, ready, q, reasonList, serviceList] = await Promise.all([
         fetch(`${API_BASE}/revenue/leakage`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/performance`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/funnel`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/attribution`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE}/revenue/pilot`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE}/revenue/readiness`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/queue${suffix}`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/loss-reasons`, { headers: getAuthHeaders() }),
         fetch(`${API_BASE}/revenue/services/revisit-intervals`, { headers: getAuthHeaders() }),
@@ -41,6 +45,8 @@ export default function MoneyPage() {
       setPerformance(perf.ok ? await perf.json() : null);
       setFunnel(fun.ok ? await fun.json() : null);
       setAttribution(attr.ok ? await attr.json() : null);
+      setPilot(pil.ok ? await pil.json() : null);
+      setReadiness(ready.ok ? await ready.json() : null);
       setQueue(q.ok ? (await q.json()).items : []);
       setReasons(reasonList.ok ? await reasonList.json() : []);
       setServices(serviceList.ok ? await serviceList.json() : []);
@@ -71,6 +77,7 @@ export default function MoneyPage() {
     setBusy(true); setError('');
     const body = { outcome: outcome.outcome };
     if (outcome.outcome === 'lost') body.loss_reason = outcome.loss_reason;
+    if (outcome.verdict) body.verdict = outcome.verdict;
     const res = await fetch(`${API_BASE}/revenue/opportunities/${selected.id}/outcome`, {
       method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body),
     });
@@ -89,6 +96,14 @@ export default function MoneyPage() {
     else setError('Chỉ chủ phòng khám mới đổi được chu kỳ tái khám.');
   };
 
+  const markReviewed = async () => {
+    const res = await fetch(`${API_BASE}/revenue/services/revisit-intervals/reviewed`, {
+      method: 'POST', headers: getAuthHeaders(),
+    });
+    if (res.ok) { setShowSetup(false); load(); }
+    else setError('Chỉ chủ phòng khám mới xác nhận được.');
+  };
+
   const openChain = async (item) => {
     const res = await fetch(`${API_BASE}/revenue/opportunities/${item.id}/chain`, { headers: getAuthHeaders() });
     if (res.ok) setChain({ ...(await res.json()), patientName: item.patient.name });
@@ -98,8 +113,6 @@ export default function MoneyPage() {
   const copyMessage = (item) => {
     navigator.clipboard?.writeText(item.recommended_message || '');
   };
-
-  const configured = services.filter((s) => s.revisit_interval_days).length;
 
   return <div>
     <div className="page-header">
@@ -116,12 +129,15 @@ export default function MoneyPage() {
 
     {/* The clinic has to say which treatments repeat before recall can see
         anyone. Without this prompt the dashboard just looks empty and broken. */}
-    {!loading && configured === 0 && <div className="card" style={{ padding: 16, marginBottom: 16, borderLeft: '4px solid var(--warning-color, #f59e0b)' }}>
-      <b>Chưa dịch vụ nào khai báo chu kỳ tái khám.</b>
-      <div style={{ fontSize: 13, color: 'var(--text-muted, #64748b)', margin: '6px 0 10px' }}>
-        Hệ thống không tự đoán chu kỳ — đoán sai là nhắn cho người chưa đến hạn. Khai báo xong mới tìm được khách quá hạn tái khám.
+    {!loading && readiness?.needs_attention && <div className="card" style={{ padding: 16, marginBottom: 16, borderLeft: '4px solid var(--warning-color, #f59e0b)' }}>
+      <b>⚠ Revenue Recovery chưa chạy đầy đủ</b>
+      <div style={{ fontSize: 13, margin: '8px 0' }}>
+        <b>Quá hạn tái khám: 0 cơ hội.</b> Lý do: chưa có chu kỳ tái khám.
       </div>
-      <button className="btn btn-primary btn-sm" onClick={() => setShowSetup(true)}>Khai báo chu kỳ</button>
+      <div style={{ fontSize: 13, color: 'var(--text-muted, #64748b)', marginBottom: 10 }}>
+        {readiness.message}
+      </div>
+      <button className="btn btn-primary btn-sm" onClick={() => setShowSetup(true)}>Thiết lập chu kỳ</button>
     </div>}
 
     {loading ? <div style={{ padding: 28, textAlign: 'center' }}>Đang tải...</div> : <>
@@ -177,6 +193,48 @@ export default function MoneyPage() {
               {performance.roi ? `Trên phí thuê bao ${money(performance.subscription_cost)}.` : 'Chưa đủ dữ liệu để kết luận.'}
             </div>
           </div>
+        </div>
+      </div>}
+
+      {/* --- the pilot scorecard ------------------------------------------ */}
+      {pilot && <div className="card" style={{ padding: 16, marginBottom: 18 }}>
+        <h3 style={{ margin: '0 0 4px' }}>Bảng điểm pilot ({pilot.window_days} ngày qua)</h3>
+        <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)', marginBottom: 12 }}>
+          Trả lời "engine có tốt không" — khác với "thu về bao nhiêu tiền", và dùng mẫu khác.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)' }}>Tìm đúng cơ hội?</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>
+              {pilot.detection_precision === null ? '—' : percent(pilot.detection_precision)}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>
+              {pilot.detection_precision === null
+                ? pilot.precision_note
+                : `${pilot.judged_real}/${pilot.judged} ca lễ tân xác nhận là đáng thu hồi`}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)' }}>Tỷ lệ thu hồi</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>
+              {pilot.recovery_rate === null ? '—' : percent(pilot.recovery_rate)}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>
+              {money(pilot.actual_recovered)} / {money(pilot.opportunity_value)} · {pilot.sample_size} ca đã có kết quả
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted, #64748b)' }}>Giá trị một cơ hội</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>
+              {pilot.revenue_per_opportunity === null ? '—' : money(pilot.revenue_per_opportunity)}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)' }}>
+              Chia cho mọi cơ hội, kể cả ca hỏng — không phải chỉ ca thắng.
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)', marginTop: 10 }}>
+          {pilot.sample_note}
         </div>
       </div>}
 
@@ -282,7 +340,7 @@ export default function MoneyPage() {
               <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="btn btn-secondary btn-sm" onClick={() => copyMessage(item)}>Chép tin nhắn</button>
                 {item.status === 'open' && <button className="btn btn-primary btn-sm" onClick={() => markContacted(item)}>Đã liên hệ</button>}
-                <button className="btn btn-secondary btn-sm" onClick={() => { setSelected(item); setOutcome({ outcome: 'recovered', loss_reason: 'price' }); }}>Kết quả</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => { setSelected(item); setOutcome({ outcome: 'recovered', loss_reason: 'price', verdict: '' }); }}>Kết quả</button>
                 <button className="btn btn-secondary btn-sm" onClick={() => openChain(item)}>Truy vết</button>
               </div></td>
             </tr>)}
@@ -309,6 +367,22 @@ export default function MoneyPage() {
                 <option value="lost">Không thành</option>
                 <option value="dismissed">Bỏ qua ca này</option>
               </select>
+            </div>
+            {/* Asked here because this is the moment staff have the case in
+                front of them. Conversion cannot answer it: a real miss that
+                refused to come back is a working detector, not a bad one. */}
+            <div className="form-group">
+              <label>Cơ hội này có thực sự đáng thu hồi không?</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[['yes', 'Có'], ['no', 'Không'], ['unsure', 'Không chắc']].map(([code, label]) => (
+                  <button type="button" key={code}
+                          className={`btn btn-sm ${outcome.verdict === code ? 'btn-primary' : 'btn-secondary'}`}
+                          onClick={() => setOutcome({ ...outcome, verdict: code })}>{label}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted, #64748b)', marginTop: 6 }}>
+                Đây là cách duy nhất phân biệt "engine tìm được nhiều" với "engine tìm đúng".
+              </div>
             </div>
             {outcome.outcome === 'lost' && <div className="form-group"><label>Vì sao mất?</label>
               <select className="form-control" value={outcome.loss_reason}
@@ -367,22 +441,39 @@ export default function MoneyPage() {
           <button className="modal-close-btn" onClick={() => setShowSetup(false)}>&times;</button></div>
         <div className="modal-body">
           <p style={{ fontSize: 13, color: 'var(--text-muted, #64748b)' }}>
-            Để trống nghĩa là dịch vụ làm một lần — hệ thống sẽ không bao giờ nhắc tái khám cho dịch vụ đó.
+            Để CareDesk tìm khách quá hạn tái khám, hãy cho biết dịch vụ nào khách cần quay lại và sau bao nhiêu ngày.
+            Để trống nghĩa là dịch vụ làm một lần — sẽ không bao giờ nhắc tái khám.
           </p>
           <table className="custom-table">
-            <thead><tr><th>Dịch vụ</th><th style={{ width: 150 }}>Lặp lại sau (ngày)</th></tr></thead>
+            <thead><tr><th>Dịch vụ</th><th style={{ width: 190 }}>Lặp lại sau (ngày)</th></tr></thead>
             <tbody>
               {services.map((service) => <tr key={service.id}>
                 <td>{service.name}</td>
-                <td><input className="form-control" type="number" min={1} max={1095}
-                           defaultValue={service.revisit_interval_days || ''}
-                           placeholder="không lặp"
-                           onBlur={(e) => saveInterval(service, e.target.value)} /></td>
+                <td>
+                  <input className="form-control" type="number" min={1} max={1095}
+                         defaultValue={service.revisit_interval_days || ''}
+                         placeholder="không lặp"
+                         onBlur={(e) => saveInterval(service, e.target.value)} />
+                  {/* A suggestion the clinic clicks, never one applied for them.
+                      Applying it silently would be the engine deciding who gets
+                      chased, which is the one thing it must not do. */}
+                  {!service.revisit_interval_days && service.suggested_days && (
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 4 }}
+                            onClick={() => saveInterval(service, String(service.suggested_days))}>
+                      Dùng gợi ý: {service.suggested_days} ngày
+                    </button>
+                  )}
+                </td>
               </tr>)}
             </tbody>
           </table>
         </div>
-        <div className="modal-footer">
+        <div className="modal-footer" style={{ gap: 8 }}>
+          {/* A clinic whose treatments genuinely never repeat needs a way out
+              that is not inventing a number to silence the warning. */}
+          <button className="btn btn-secondary" onClick={markReviewed}>
+            Không dịch vụ nào lặp lại
+          </button>
           <button className="btn btn-primary" onClick={() => { setShowSetup(false); rescan(); }}>Xong, quét lại</button>
         </div>
       </div>

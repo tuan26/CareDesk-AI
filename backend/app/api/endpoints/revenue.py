@@ -20,7 +20,7 @@ from backend.app.api.deps import verify_owner, verify_receptionist_or_above
 from backend.app.core import clock
 from backend.app.core.database import get_db
 from backend.app.models.models import (
-    PatientLead, RevenueAction, RevenueOpportunity, Service, User,
+    Clinic, PatientLead, RevenueAction, RevenueOpportunity, Service, User,
 )
 from backend.app.services import revenue_recovery as rr
 from backend.app.services.audit import log_action
@@ -193,6 +193,9 @@ class OutcomePayload(BaseModel):
     outcome: str = Field(..., description="recovered | lost | dismissed")
     loss_reason: Optional[str] = None
     recovered_amount: Optional[float] = None
+    #: Asked at the same moment, because this is when staff have the case in
+    #: front of them and know whether it was ever worth chasing.
+    verdict: Optional[str] = Field(None, description="yes | no | unsure")
 
 
 @router.post("/opportunities/{opportunity_id}/outcome")
@@ -219,6 +222,12 @@ def record_outcome(
                 detail=f"Lý do mất phải thuộc: {', '.join(rr.LOSS_REASONS)}",
             )
         opportunity.loss_reason = payload.loss_reason
+
+    if payload.verdict:
+        if payload.verdict not in rr.JUDGEMENTS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Đánh giá phải là: {', '.join(rr.JUDGEMENTS)}")
+        rr.judge_opportunity(opportunity, payload.verdict)
 
     opportunity.status = payload.outcome
     opportunity.resolved_at = clock.now()
@@ -357,14 +366,102 @@ def list_revisit_intervals(
     db: Session = Depends(get_db),
     current_user: User = Depends(verify_receptionist_or_above),
 ) -> Any:
-    """Which services have an interval set — i.e. what recall can even see."""
+    """Which services have an interval set — i.e. what recall can even see.
+
+    ``suggested_days`` is shown beside the empty box and is never written by
+    anything but a person clicking it. A suggestion the clinic accepts is a
+    prompt; one applied on their behalf is a guess wearing a default's clothes,
+    and it would be the engine deciding who gets chased.
+    """
     services = db.query(Service).filter(
         Service.clinic_id == _clinic_id(current_user)
     ).order_by(Service.name.asc()).all()
     return [{
         "id": s.id, "name": s.name, "price": s.price,
         "revisit_interval_days": s.revisit_interval_days,
+        "suggested_days": rr.suggest_revisit_days(s.name),
     } for s in services]
+
+
+@router.post("/services/revisit-intervals/reviewed")
+def mark_intervals_reviewed(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_owner),
+) -> Any:
+    """The clinic has been through the screen and is done.
+
+    Needed because "no interval is set" and "nothing here repeats" look
+    identical in the data, and a clinic in the second case would otherwise be
+    nagged forever — or invent a number to make the warning go away, which is
+    the one input this engine must never be given.
+    """
+    clinic = db.get(Clinic, _clinic_id(current_user))
+    clinic.revisit_intervals_reviewed_at = clock.now()
+    db.commit()
+    log_action(db, current_user.id, "revisit_intervals_reviewed",
+               details=str(clinic.revisit_intervals_reviewed_at))
+    return rr.recovery_readiness(db, clinic.id)
+
+
+@router.get("/readiness")
+def readiness(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """Which detectors can actually see anything, and what is missing.
+
+    A pilot fails quietly like this: nobody sets a revisit interval, the largest
+    detector returns nothing, and everyone concludes the engine cannot find much.
+    """
+    return rr.recovery_readiness(db, _clinic_id(current_user))
+
+
+@router.get("/pilot")
+def pilot(
+    days: int = Query(30, ge=7, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """The pilot scorecard: is the engine any good, and is the money real.
+
+    Separate from the owner dashboard because the two answer different
+    questions and use different denominators. Detection precision comes from
+    staff verdicts and cannot be computed — no judgements, no number.
+    """
+    return rr.pilot_scorecard(db, _clinic_id(current_user), days=days)
+
+
+class JudgementPayload(BaseModel):
+    verdict: str = Field(..., description="yes | no | unsure")
+
+
+@router.post("/opportunities/{opportunity_id}/judge")
+def judge(
+    opportunity_id: int,
+    payload: JudgementPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(verify_receptionist_or_above),
+) -> Any:
+    """"Was this really worth chasing?" — the only measure of detection quality.
+
+    Conversion cannot answer it. An opportunity can be perfectly real and still
+    not convert, and a bad one that happens to convert says nothing good about
+    the detector. Judgeable whatever the outcome, including on the holdout,
+    because whether a miss was real has nothing to do with contacting anyone.
+    """
+    if payload.verdict not in rr.JUDGEMENTS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Đánh giá phải là: {', '.join(rr.JUDGEMENTS)}")
+    opportunity = _owned(db, opportunity_id, current_user)
+    rr.judge_opportunity(opportunity, payload.verdict)
+    db.commit()
+    return {"id": opportunity.id, "is_real_opportunity": opportunity.is_real_opportunity,
+            "judged_at": opportunity.judged_at}
+
+
+@router.get("/judgements")
+def judgements(current_user: User = Depends(verify_receptionist_or_above)) -> Any:
+    return [{"code": code, "label": label} for code, label in rr.JUDGEMENTS.items()]
 
 
 def _owned(db: Session, opportunity_id: int, user: User) -> RevenueOpportunity:

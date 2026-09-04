@@ -127,6 +127,13 @@ class Clinic(Base):
     baseline_return_percent = Column(Float, nullable=True)
     baseline_captured_at = Column(DateTime(timezone=True), nullable=True)
 
+    #: When the clinic last went through the revisit-interval screen. Separate
+    #: from "any interval is set" because a clinic whose treatments genuinely
+    #: never repeat must still be able to finish onboarding — otherwise the only
+    #: way out of the step is to invent a number, which is the one thing the
+    #: recall engine must never be fed.
+    revisit_intervals_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=clock.now, server_default=func.now())
 
     organization = relationship("Organization", back_populates="clinics")
@@ -910,6 +917,16 @@ class RevenueOpportunity(Base):
     #: Why it was lost, filled in by staff. Free text is useless in aggregate,
     #: so this is a closed list — see LOSS_REASONS.
     loss_reason = Column(String, nullable=True)
+
+    #: Staff's own verdict on the detection, asked while they work the queue:
+    #: "was this really worth chasing?" yes | no | unsure, NULL = not asked yet.
+    #:
+    #: This is the only measure of whether the engine finds the *right* misses
+    #: rather than merely a lot of them. Conversion cannot answer it: an
+    #: opportunity can be perfectly real and still not convert, and a bad one
+    #: that happens to convert says nothing good about the detector.
+    is_real_opportunity = Column(String, nullable=True, index=True)
+    judged_at = Column(DateTime(timezone=True), nullable=True)
 
     patient = relationship("PatientLead", foreign_keys=[patient_id])
     service = relationship("Service", foreign_keys=[service_id])

@@ -139,6 +139,89 @@ Funnel chỉ đếm người **đã thực sự được liên hệ**. Khách t�
 trong funnel outreach — cho vào sẽ khiến tỷ lệ liên hệ→đặt lịch trông như tin
 nhắn có tác dụng trong khi chưa gửi gì.
 
+---
+
+# Controlled Pilot
+
+Mục tiêu 2–4 tuần đầu **không phải kiếm nhiều tiền**, mà chứng minh 5 điều:
+detect đúng → owner thấy cơ hội có thật → contact tạo booking → booking tạo
+doanh thu → doanh thu **tăng thêm** so với nhóm đối chứng.
+
+## P1. Trước khi bật pilot
+
+Chạy `bash scripts/check_migrations.sh` — dựng DB trắng, so schema với model,
+**diễn tập rollback**, chạy lại upgrade. Bước rollback là bước đáng giá nhất:
+nó đã bắt được một `downgrade()` gãy giữa chừng trên SQLite (drop cột khi index
+còn trỏ vào), đúng trạng thái không ai muốn phát hiện lúc đang cố hoàn tác một
+bản deploy hỏng.
+
+Sau đó kiểm `GET /revenue/readiness`. `needs_attention = true` nghĩa là detector
+lớn nhất đang tắt.
+
+## P2. `detection_precision` — tìm nhiều ≠ tìm đúng
+
+Khi lễ tân xử lý một ca, hỏi thêm một câu: **"Cơ hội này có thực sự đáng thu hồi
+không?"** → `yes` / `no` / `unsure`.
+
+```
+Engine tìm 50 → lễ tân nói có thật 41 → precision ≈ 82%
+```
+
+Tỷ lệ chuyển đổi **không** trả lời được câu này: một cơ hội hoàn toàn có thật
+vẫn có thể không chốt được, và một cơ hội tồi tình cờ chốt được cũng không nói
+lên điều gì tốt về bộ phát hiện. `unsure` là câu trả lời thật và bị **loại khỏi**
+phép tính precision chứ không bị ép về một phía.
+
+Chưa ai đánh giá → `detection_precision: null`. Hệ thống không tự chấm điểm mình.
+
+## P3. `recovery_rate` — cẩn thận cái mẫu
+
+```
+Giá trị cơ hội   ₫42M
+Thực thu         ₫27.4M
+Recovery rate    65.2%
+```
+
+Mẫu **chỉ gồm**: cơ hội sinh tiền mới (`NEW_REVENUE`), giá trị > 0, ngoài nhóm
+đối chứng, đã có kết quả (`recovered` hoặc `lost`).
+
+Nằm ngoài mẫu: gói khách đã trả tiền (không thể "thu hồi" thứ đã thu), cơ hội
+`superseded`, cơ hội còn mở (chưa phải câu trả lời — tính là thua thì mọi tỷ lệ
+đều bắt đầu từ 0 rồi bò lên theo tốc độ đóng tồn).
+
+Tỷ lệ **không bị chặn ở 100%**. Vượt 100% là một phát hiện — ước lượng đang thấp
+— và chặn lại là giấu đúng thứ đáng biết.
+
+## P4. `revenue_per_opportunity` — con số để định giá
+
+Chia cho **toàn bộ** cơ hội trong mẫu, kể cả ca hỏng. Chia cho riêng ca thắng sẽ
+trả lời "một ca thắng đáng bao nhiêu", câu chẳng ai cần.
+
+Sau vài phòng khám, đây là cơ sở thực tế để nói *"một opportunity của CareDesk
+đáng khoảng X đồng"* — và từ đó mới bàn được giá.
+
+## P5. Ba tầng dữ liệu, ba ngưỡng khác nhau
+
+| Tầng | Cần | Mở khoá |
+|---|---|---|
+| A — Detection | 30–50 ca **có kết quả** | `detection_precision` |
+| B — Conversion | funnel chạy đủ 5 bước | benchmark liên hệ → tiền |
+| C — Incrementality | **30 ca đối chứng** | `net_attributable`, `roi` |
+
+Không cần mỗi nhóm cơ hội đủ 30. Tầng A chỉ hỏi: engine có tìm đúng những ca mà
+owner coi là đáng cứu không.
+
+## P6. Pilot đầu KHÔNG có AI Sales Agent
+
+```
+Phase 1 (bây giờ)  Detect → Queue → người liên hệ → ghi kết quả → booking → tiền
+Phase 2 (sau 30–50 ca)  AI soạn nháp → người duyệt → gửi
+Phase 3 (khi đủ dữ liệu)  Tự động liên hệ
+```
+
+Làm Agent trước thì sẽ có nhiều booking mà không biết Agent có thực sự tạo thêm
+doanh thu hay không. Mỗi phase như trên đều tự chứng minh được ROI của chính nó.
+
 ## 4. Chu kỳ tái khám phải do phòng khám khai
 
 `services.revisit_interval_days` mặc định **NULL = làm một lần, không bao giờ

@@ -1181,3 +1181,146 @@ def money_queue(db: Session, clinic_id: int, limit: int = 50,
     if opportunity_type:
         query = query.filter(RevenueOpportunity.opportunity_type == opportunity_type)
     return sorted(query.all(), key=score, reverse=True)[:limit]
+
+# --- helping the clinic fill in the one thing nothing can infer --------------
+
+#: Typical repeat intervals, offered as a starting point on the setup screen and
+#: **never written by the system**. A suggestion the clinic has to accept is a
+#: prompt; a suggestion applied on their behalf is a guess wearing a default's
+#: clothing, and it would be this engine deciding who gets chased.
+#:
+#: Keyed on words that appear in Vietnamese service names, matched on folded
+#: text so "Botox" and "botox tiêm" both hit.
+REVISIT_SUGGESTIONS = (
+    (("botox", "tiem botox"), 90),
+    (("filler", "tiem filler"), 180),
+    (("mun", "acne", "tri mun"), 30),
+    (("cham soc da", "facial", "soi da", "duong da"), 30),
+    (("laser", "co2", "picosure", "yag"), 45),
+    (("peel", "tay te bao", "thay da"), 30),
+    (("triet long", "wax"), 45),
+    (("meso", "hifu", "rf", "cang da"), 120),
+    (("tam trang", "phun xam"), 90),
+)
+
+
+def suggest_revisit_days(service_name: str) -> Optional[int]:
+    """A number to show next to the empty box, not one to put in it."""
+    from backend.app.services.booking_flow import strip_accents
+
+    folded = strip_accents(service_name or "")
+    for keywords, days in REVISIT_SUGGESTIONS:
+        if any(keyword in folded for keyword in keywords):
+            return days
+    return None
+
+
+def recovery_readiness(db: Session, clinic_id: int) -> Dict[str, Any]:
+    """Which detectors can actually see anything, and what is missing.
+
+    Written because of how a pilot fails quietly: the clinic never sets a
+    revisit interval, ``overdue_revisit`` returns nothing, and everyone
+    concludes the engine cannot find much — when the truth is that the largest
+    detector was switched off the whole time for want of one number.
+    """
+    clinic = db.get(Clinic, clinic_id)
+    services = db.query(Service).filter(Service.clinic_id == clinic_id).all()
+    configured = [s for s in services if s.revisit_interval_days]
+
+    reviewed = bool(clinic and clinic.revisit_intervals_reviewed_at)
+    return {
+        "services_total": len(services),
+        "services_with_interval": len(configured),
+        "reviewed": reviewed,
+        # Deliberately not "ready": a clinic whose treatments genuinely never
+        # repeat is ready with zero intervals, as long as they have said so.
+        "overdue_revisit_enabled": bool(configured),
+        "needs_attention": not configured and not reviewed,
+        "message": (
+            None if configured or reviewed else
+            "Chưa dịch vụ nào khai báo chu kỳ tái khám, nên nhóm 'Quá hạn tái khám' "
+            "đang không tìm được ai. Hệ thống không tự đoán chu kỳ — phòng khám cần "
+            "khai báo, hoặc xác nhận là không có dịch vụ nào lặp lại."
+        ),
+    }
+
+
+def pilot_scorecard(db: Session, clinic_id: int, days: int = 30) -> Dict[str, Any]:
+    """The five things a controlled pilot has to prove, each with its own number.
+
+    Kept apart from the owner-facing dashboard on purpose. This answers "is the
+    engine any good", which is a different question from "how much money came
+    back", and the two have different denominators.
+    """
+    since = clock.now() - timedelta(days=days)
+    rows = db.query(RevenueOpportunity).filter(
+        RevenueOpportunity.clinic_id == clinic_id,
+        RevenueOpportunity.detected_at >= since,
+        RevenueOpportunity.status != "superseded",
+    ).all()
+
+    # 1. Does the engine find the right misses? Only staff can say, so this is
+    #    the one figure the system cannot produce on its own.
+    judged_yes = [o for o in rows if o.is_real_opportunity == "yes"]
+    judged_no = [o for o in rows if o.is_real_opportunity == "no"]
+    judged_total = len(judged_yes) + len(judged_no)
+    precision = len(judged_yes) / judged_total if judged_total else None
+
+    # 2. The money sample. Package opportunities are already paid for and cannot
+    #    be "recovered", and a zero-valued opportunity has nothing to divide by,
+    #    so both are outside the denominator rather than dragging it around.
+    sample = [o for o in rows
+              if VALUE_KIND.get(o.opportunity_type) == NEW_REVENUE
+              and float(o.estimated_value or 0) > 0
+              and not o.is_holdout]
+    resolved = [o for o in sample if o.status in ("recovered", "lost")]
+    recovered = [o for o in resolved if o.status == "recovered"]
+
+    opportunity_value = sum(float(o.estimated_value or 0) for o in resolved)
+    actual_recovered = sum(float(o.recovered_amount or 0) for o in recovered)
+
+    return {
+        "window_days": days,
+        # --- is detection any good ---
+        "detected": len(rows),
+        "judged": judged_total,
+        "judged_real": len(judged_yes),
+        "judged_not_real": len(judged_no),
+        "judged_unsure": len([o for o in rows if o.is_real_opportunity == "unsure"]),
+        "detection_precision": precision,
+        "precision_note": (
+            None if judged_total else
+            "Chưa có cơ hội nào được lễ tân đánh giá. Không có số này thì không "
+            "phân biệt được 'tìm được nhiều' với 'tìm đúng'."
+        ),
+        # --- is the money real ---
+        "sample_size": len(resolved),
+        "opportunity_value": opportunity_value,
+        "actual_recovered": actual_recovered,
+        # Can legitimately exceed 100% when patients pay more than the estimate;
+        # capping it would hide that the estimates are low.
+        "recovery_rate": (actual_recovered / opportunity_value) if opportunity_value else None,
+        # What one detected opportunity has actually been worth here. The number
+        # that eventually decides what this product may be priced at.
+        "revenue_per_opportunity": (actual_recovered / len(sample)) if sample else None,
+        "sample_note": (
+            "Mẫu chỉ gồm cơ hội sinh tiền mới, có giá trị > 0, ngoài nhóm đối chứng. "
+            "Gói khách đã trả tiền nằm ngoài mẫu."
+        ),
+    }
+
+
+def judge_opportunity(opportunity: RevenueOpportunity, verdict: str) -> RevenueOpportunity:
+    """Record what staff thought of the detection itself."""
+    opportunity.is_real_opportunity = verdict
+    opportunity.judged_at = clock.now()
+    return opportunity
+
+
+#: The three answers to "was this really worth chasing?". Unsure is a real
+#: answer and is kept out of the precision maths rather than forced to a side.
+JUDGEMENTS = {
+    "yes": "Có, đáng thu hồi",
+    "no": "Không, không đáng",
+    "unsure": "Không chắc",
+}
