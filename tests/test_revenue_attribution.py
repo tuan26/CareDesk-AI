@@ -334,7 +334,8 @@ def test_a_reply_from_the_patient_marks_the_action_answered(db, clinic, service)
     conversation = Conversation(clinic_id=clinic.id, patient_id=patient.id)
     db.add(conversation)
     db.flush()
-    db.add(Message(conversation_id=conversation.id, sender="user", content="Dạ em muốn đặt lịch"))
+    db.add(Message(conversation_id=conversation.id, sender=rr.PATIENT_SENDER,
+                   content="Dạ em muốn đặt lịch"))
     db.commit()
 
     assert rr.detect_responses(db, clinic.id) == 1
@@ -350,7 +351,8 @@ def test_a_message_sent_before_the_outreach_is_not_a_reply(db, clinic, service):
     conversation = Conversation(clinic_id=clinic.id, patient_id=patient.id)
     db.add(conversation)
     db.flush()
-    db.add(Message(conversation_id=conversation.id, sender="user", content="Cho em hỏi giá",
+    db.add(Message(conversation_id=conversation.id, sender=rr.PATIENT_SENDER,
+                   content="Cho em hỏi giá",
                    created_at=clock.now() - datetime.timedelta(days=10)))
     db.commit()
 
@@ -420,3 +422,24 @@ def test_each_funnel_step_is_counted_from_its_own_record(db, clinic, service):
     assert funnel["contacted"] == 1
     assert funnel["responded"] == 0
     assert funnel["booked"] == 0
+
+
+def test_the_reply_detector_uses_the_label_the_webhook_actually_writes():
+    """The join between two subsystems written months apart.
+
+    detect_responses matched sender == "user". Nothing in this system has ever
+    written that — every inbound message is "patient" — so the Responded step of
+    the funnel sat at zero for ever while looking perfectly healthy, and the
+    test above passed because it created the wrong value too. Asserting against
+    the webhook's own source is the only version of this test that could have
+    caught it.
+    """
+    import inspect
+
+    from backend.app.api.endpoints import webhooks
+
+    source = inspect.getsource(webhooks._handle_inbound_message)
+    assert f'sender="{rr.PATIENT_SENDER}"' in source, (
+        "webhook ghi sender khác với giá trị detect_responses tìm — "
+        "bước 'Có phản hồi' sẽ luôn bằng 0"
+    )

@@ -151,6 +151,11 @@ DIRECT_WINDOW_DAYS = 3
 #: and recovered revenue grows on its own.
 ATTRIBUTION_WINDOW_DAYS = 30
 
+#: How an inbound message from a patient is labelled in the messages table.
+#: Named here rather than typed inline because it is the join between two
+#: subsystems that were written months apart, and a typo in it fails silently.
+PATIENT_SENDER = "patient"
+
 #: Share of opportunities deliberately left uncontacted, to measure lift.
 HOLDOUT_RATE = 0.10
 #: Below this, the holdout cannot support a claim and none is made.
@@ -871,7 +876,12 @@ def detect_responses(db: Session, clinic_id: int) -> int:
             Conversation, Message.conversation_id == Conversation.id
         ).filter(
             Conversation.patient_id == opportunity.patient_id,
-            Message.sender == "user",
+            # "patient", not "user". Every inbound message in this system is
+            # written with this value — see _handle_inbound_message in
+            # api/endpoints/webhooks.py — and matching "user" silently found
+            # nothing, so the Responded step of the funnel sat at zero for ever
+            # while looking perfectly healthy.
+            Message.sender == PATIENT_SENDER,
             Message.created_at >= sent_at,
         ).order_by(Message.id.asc()).first()
         if not reply:
