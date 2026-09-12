@@ -81,6 +81,7 @@ export default function Layout() {
     ] },
     { label: 'Doanh thu rơi', items: [
       { to: '/money', icon: '💰', text: 'Tiền đang rơi' },
+      { to: '/import', icon: '📥', text: 'Nhập khách từ Excel' },
     ] },
     { label: t('retain'), items: [
       { to: '/patients', icon: '👥', text: t('patients') }, { to: '/packages', icon: '🎁', text: t('packages') }, { to: '/automation', icon: '⚡', text: t('automation') },

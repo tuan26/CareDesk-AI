@@ -13,7 +13,7 @@ from backend.app.core.seed import seed_db
 from backend.app.api.endpoints import (
     auth, clinic, appointment, chat, webhooks, reports, public, ws,
         packages, automations, copilot, platform, org, booking_requests, landing, seo,
-        onboarding, visits, content, revenue
+        onboarding, visits, content, revenue, imports
 )
 from backend.app.services.ws_manager import ws_manager
 from backend.app.services.reminder import reminder_loop
@@ -134,6 +134,7 @@ app.include_router(onboarding.router, prefix=f"{settings.API_V1_STR}/onboarding"
 app.include_router(visits.router, prefix=f"{settings.API_V1_STR}/visits", tags=["Queue & Visit Records"])
 app.include_router(content.router, prefix=f"{settings.API_V1_STR}/content", tags=["Website Content"])
 app.include_router(revenue.router, prefix=f"{settings.API_V1_STR}/revenue", tags=["Revenue Recovery"])
+app.include_router(imports.router, prefix=f"{settings.API_V1_STR}/import", tags=["Data Import"])
 
 # Public landing pages are server-rendered HTML for crawlers, so they live at
 # /book/* rather than under the JSON API prefix. nginx/vite proxy this path to

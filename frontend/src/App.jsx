@@ -18,6 +18,7 @@ import OrgPage from './pages/OrgPage';
 import ClinicChatPage from './pages/ClinicChatPage';
 import BookingRequestsPage from './pages/BookingRequestsPage';
 import MoneyPage from './pages/MoneyPage';
+import ImportPage from './pages/ImportPage';
 import OnboardingPage from './pages/OnboardingPage';
 import QueuePage from './pages/QueuePage';
 import WebsitePage from './pages/WebsitePage';
@@ -81,6 +82,7 @@ function App() {
           <Route path="appointments" element={<AppointmentsPage />} />
           <Route path="booking-requests" element={<BookingRequestsPage />} />
           <Route path="money" element={<MoneyPage />} />
+          <Route path="import" element={<ImportPage />} />
           <Route path="queue" element={<QueuePage />} />
 
           <Route path="inbox" element={<InboxPage />} />
