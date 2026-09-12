@@ -10,6 +10,7 @@ due actions through the patient's channel (web widget / Zalo / Facebook / SMS).
 Revenue features (follow-up, recall, win-back, review ask, waitlist fill,
 package expiry) are all just rules — configuration, not code.
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -18,6 +19,8 @@ from backend.app.models.models import (
     Message, Appointment, Service, ReviewRequest, WaitlistEntry, PatientPackage, Clinic
 )
 from backend.app.core import clock
+
+logger = logging.getLogger(__name__)
 
 
 def emit_event(db: Session, clinic_id: Optional[int], event_type: str,
@@ -64,6 +67,17 @@ def deliver_to_patient(db: Session, patient: PatientLead, text: str) -> bool:
     from backend.app.services.channel_gateway import (
         send_zalo_message, send_facebook_message, send_zns_or_sms
     )
+    from backend.app.services.patients import may_send_marketing
+
+    # Everything routed through here is proactive: a follow-up, a win-back, a
+    # package nudge. A patient who asked to be left alone gets none of it.
+    # Appointment reminders do not come through this function — those are for a
+    # visit they booked themselves, and withholding one would be the opposite of
+    # respecting what they asked for.
+    if not may_send_marketing(patient):
+        logger.info("Bỏ qua tin tự động: khách %s đã từ chối nhận liên hệ", patient.id)
+        return False
+
     conv = db.query(Conversation).filter(
         Conversation.patient_id == patient.id
     ).order_by(Conversation.updated_at.desc()).first()

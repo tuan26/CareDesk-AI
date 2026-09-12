@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.models.models import Conversation, Message, PatientLead, Clinic
 from backend.app.services.ai_engine import process_chat_message
+from backend.app.services.patients import OPT_OUT_ACK, detects_opt_out, opt_out
 from backend.app.services.channel_gateway import (
     get_integration, send_zalo_message, send_facebook_message
 )
@@ -62,6 +63,22 @@ def _handle_inbound_message(db: Session, clinic_id: int, channel: str,
     db.add(Message(conversation_id=conv.id, sender="patient", content=text))
     conv.updated_at = clock.now()
     db.commit()
+
+    # "Dung nhan nua" has to take effect on the message that says it, not once a
+    # human gets round to reading the inbox. Acknowledged and answered here,
+    # because going silent on someone who asked you to stop reads as ignoring
+    # them, and the next automated message would prove it.
+    if detects_opt_out(text) and not lead.contact_opt_out:
+        opt_out(db, lead, reason="patient_request")
+        db.add(Message(conversation_id=conv.id, sender="bot", content=OPT_OUT_ACK))
+        db.commit()
+        if channel == "zalo":
+            send_zalo_message(db, clinic_id, external_id, OPT_OUT_ACK)
+        elif channel == "facebook":
+            send_facebook_message(db, clinic_id, external_id, OPT_OUT_ACK)
+        ws_manager.notify(clinic_id, {"type": "message", "conversation_id": conv.id,
+                                      "sender": "patient"})
+        return conv
 
     # AI reply only when the bot is active
     if conv.status == "bot_active":

@@ -317,6 +317,18 @@ class PatientLead(Base):
     external_id = Column(String, index=True, nullable=True)  # user id on Zalo/Facebook
     consent_given = Column(Boolean, default=False)
     consent_timestamp = Column(DateTime(timezone=True), nullable=True)
+    #: The patient asked not to be contacted. Blocks marketing only — an
+    #: appointment reminder for a visit they booked themselves still goes, and
+    #: withholding it would be the opposite of respecting their wishes.
+    #:
+    #: Kept on the lead rather than per-channel: someone who says "đừng nhắn
+    #: nữa" on Zalo did not mean "so send me an SMS instead".
+    contact_opt_out = Column(Boolean, nullable=False, default=False, index=True)
+    opt_out_at = Column(DateTime(timezone=True), nullable=True)
+    #: patient_request | staff | unreachable | imported. "imported" matters: a
+    #: clinic's own spreadsheet often carries a do-not-call column, and that
+    #: refusal has to survive the import.
+    opt_out_reason = Column(String, nullable=True)
     note = Column(Text, nullable=True)  # CRM note by staff
     tags = Column(JSON, nullable=True)  # e.g. ["VIP", "Liệu trình mụn"]
     referral_code = Column(String, index=True, nullable=True)  # this patient's own code to share

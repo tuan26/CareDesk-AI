@@ -22,6 +22,7 @@ from backend.app.core.database import get_db
 from backend.app.models.models import (
     Clinic, PatientLead, RevenueAction, RevenueOpportunity, Service, User,
 )
+from backend.app.services import patients as rr_patients
 from backend.app.services import revenue_recovery as rr
 from backend.app.services.audit import log_action
 
@@ -154,6 +155,12 @@ def mark_contacted(
     a human sends it, and this endpoint records that they did.
     """
     opportunity = _owned(db, opportunity_id, current_user)
+    patient = db.get(PatientLead, opportunity.patient_id)
+    if not rr_patients.may_send_marketing(patient):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Khách đã yêu cầu không nhận liên hệ. Không được nhắn tin giới thiệu cho khách này.",
+        )
     if opportunity.is_holdout:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

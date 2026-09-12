@@ -1249,10 +1249,16 @@ def money_queue(db: Session, clinic_id: int, limit: int = 50,
     Hiding the holdout is not cosmetic — a receptionist who sees the row will
     ring them, and the experiment is gone.
     """
-    query = db.query(RevenueOpportunity).filter(
+    query = db.query(RevenueOpportunity).join(
+        PatientLead, RevenueOpportunity.patient_id == PatientLead.id
+    ).filter(
         RevenueOpportunity.clinic_id == clinic_id,
         RevenueOpportunity.status.in_(("open", "contacted")),
         RevenueOpportunity.is_holdout == False,  # noqa: E712
+        # A patient who asked to be left alone is not work. Leaving them on the
+        # list means a receptionist rings them, which is the one outcome the
+        # opt-out exists to prevent — and the flag would be doing nothing.
+        PatientLead.contact_opt_out == False,  # noqa: E712
     )
     if opportunity_type:
         query = query.filter(RevenueOpportunity.opportunity_type == opportunity_type)

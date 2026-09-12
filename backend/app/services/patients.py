@@ -68,3 +68,76 @@ def upsert_lead(db: Session, clinic_id: Optional[int], full_name: str, phone: Op
         lead.consent_given = True
         lead.consent_timestamp = clock.now()
     return lead
+
+
+# --- do not contact ----------------------------------------------------------
+
+#: What a patient says when they want the messages to stop. Folded before
+#: matching, because almost nobody types diacritics on a phone.
+#:
+#: Kept deliberately tight. A false positive here silently cuts a real customer
+#: off from the clinic, so "khong" alone is not on the list — plenty of ordinary
+#: replies contain it ("khong biet", "khong ranh hom nay").
+_OPT_OUT_PHRASES = (
+    "dung nhan nua", "dung nhan tin nua", "dung gui nua", "dung lien he",
+    "khong nhan tin nua", "khong muon nhan", "ngung nhan tin", "ngung gui",
+    "huy nhan tin", "bo theo doi", "spam", "unsubscribe",
+    # "ko" for "không" is not slang here, it is how people type on a phone.
+    # Leaving it out meant "ko muon nhan tin" read as an ordinary reply.
+    "ko muon nhan", "ko nhan tin nua", "ko gui nua", "ko lien he", "ko nhan nua",
+)
+
+#: Whole-message refusals. "huy" is deliberately absent: Huy is one of the most
+#: common Vietnamese given names, and "hủy" on its own almost always means
+#: cancel my appointment. Either reading would silently cut a real customer off
+#: from the clinic for ever, which is far worse than missing one opt-out.
+_OPT_OUT_EXACT = ("stop", "unsubscribe", "huy nhan tin", "dung nhan")
+
+OPT_OUT_ACK = (
+    "Dạ em đã ghi nhận, bên em sẽ không gửi tin nhắn giới thiệu cho mình nữa ạ. "
+    "Nếu mình có lịch hẹn thì em vẫn nhắc giờ khám thôi. Cảm ơn mình đã phản hồi!"
+)
+
+
+def detects_opt_out(text: str) -> bool:
+    """Did the patient just ask to be left alone?"""
+    from backend.app.services.booking_flow import strip_accents
+
+    folded = strip_accents(text or "").strip()
+    if not folded:
+        return False
+    # "stop" inside a sentence is usually English sprinkled into a normal
+    # message, so it only counts as the entire reply.
+    if folded in _OPT_OUT_EXACT:
+        return True
+    return any(phrase in folded for phrase in _OPT_OUT_PHRASES)
+
+
+def opt_out(db: Session, patient: PatientLead, reason: str = "patient_request") -> PatientLead:
+    patient.contact_opt_out = True
+    patient.opt_out_at = clock.now()
+    patient.opt_out_reason = reason
+    return patient
+
+
+def opt_in(db: Session, patient: PatientLead) -> PatientLead:
+    """Only ever from an explicit request — never as a side effect of the
+    patient simply messaging again. Someone asking a question has not withdrawn
+    their refusal to be marketed at."""
+    patient.contact_opt_out = False
+    patient.opt_out_at = None
+    patient.opt_out_reason = None
+    return patient
+
+
+def may_send_marketing(patient: Optional[PatientLead]) -> bool:
+    """The gate every proactive message passes through.
+
+    Marketing only. An appointment reminder for a visit the patient booked
+    themselves is not marketing, and withholding it would be the opposite of
+    respecting what they asked for — they said stop selling to me, not stop
+    telling me when to turn up.
+    """
+    if patient is None:
+        return False
+    return not bool(patient.contact_opt_out)
